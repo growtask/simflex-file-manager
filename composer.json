@@ -1,0 +1,19 @@
+{
+  "name": "growtask/simflex-file-manager",
+  "description": "Standalone PHP file manager",
+  "minimum-stability": "stable",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "pf",
+      "email": "panzerfaust@ev0lve.xyz"
+    }
+  ],
+  "require": {
+  },
+  "autoload": {
+    "psr-0": {
+      "Simflex\\": "src/"
+    }
+  }
+}
