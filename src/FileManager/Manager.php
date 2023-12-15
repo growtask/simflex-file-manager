@@ -49,7 +49,7 @@ class Manager
      */
     protected function getPathSafe(): string
     {
-        $path = $this->rootDir . $_REQUEST['path'];
+        $path = $this->rootDir . ($_REQUEST['path'] ?? '');
         return str_contains($path, '..') ? '' : $path;
     }
 
@@ -66,14 +66,15 @@ class Manager
 
         $out = [];
         foreach (new \DirectoryIterator($path) as $dir) {
-            if (!$dir->isDir()) {
+            if (!$dir->isDir() || in_array($dir->getFilename(), ['..', '.'])) {
                 continue;
             }
 
+            $dirPath = $dir->getPath() . '/' . $dir->getFilename();
             $out[] = [
                 'name' => $dir->getFilename(),
-                'path' => $dir->getPath(),
-                'data' => $this->getTree($dir->getPath())
+                'path' => str_replace($this->rootDir, '', $dirPath),
+                'data' => $this->getTree($dirPath)
             ];
         }
 
@@ -90,25 +91,26 @@ class Manager
             return [];
         }
 
-        $includeDirs = $_REQUEST['include_dirs'];
+        $includeDirs = $_REQUEST['include_dirs'] ?? 0;
 
         $out = [];
         foreach (new \DirectoryIterator($path) as $dir) {
+            $filePath = str_replace($this->rootDir, '', $dir->getPath() . '/' . $dir->getFilename());
             if ($dir->isDir()) {
-                if (!$includeDirs) {
+                if (!$includeDirs || in_array($dir->getFilename(), ['..', '.'])) {
                     continue;
                 }
 
                 $out[] = [
                     'type' => 'dir',
                     'name' => $dir->getFilename(),
-                    'path' => $dir->getPath()
+                    'path' => $filePath
                 ];
             } else {
                 $out[] = [
                         'type' => 'file',
                         'name' => $dir->getFilename(),
-                        'path' => $dir->getPath(),
+                        'path' => $filePath,
                     ] + $this->getFileInfo($dir);
             }
         }
@@ -173,7 +175,7 @@ class Manager
 
         return [
             'is_pic' => $isPic,
-            'size' => $size,
+            'size' => (int)$size,
             'size_ext' => $sizeExt,
             'dimensions' => $imgDimensions,
             'edited' => $changeDate
@@ -335,7 +337,7 @@ class Manager
     #[NoReturn]
     protected function sendResponseAndQuit(array $data): void
     {
-        header('Content-Type: application/json');
+        header('Content-Type: application/json; charset=utf-8');
         echo json_encode($data, JSON_UNESCAPED_UNICODE);
         exit;
     }
