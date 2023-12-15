@@ -28,7 +28,7 @@ class Manager
         }
 
         // check that the method exists
-        $method = $_REQUEST['method'];
+        $method = $_REQUEST['method'] ?? '';
         if (!method_exists($this, $method)) {
             $this->sendResponseAndQuit([
                 'success' => false,
@@ -335,6 +335,7 @@ class Manager
     #[NoReturn]
     protected function sendResponseAndQuit(array $data): void
     {
+        header('Content-Type: application/json');
         echo json_encode($data, JSON_UNESCAPED_UNICODE);
         exit;
     }
