@@ -1,11 +1,20 @@
 <?php
+
 namespace Simflex\FileManager;
 
 use JetBrains\PhpStorm\NoReturn;
 
 class Manager
 {
-    public $testAuthFn;
+    /** @var callable */
+    protected $testAuthFn;
+    protected string $rootDir;
+
+    public function __construct(string $root, $authFn)
+    {
+        $this->rootDir = $root;
+        $this->testAuthFn = $authFn;
+    }
 
     #[NoReturn]
     public function handleRequest(): void
@@ -40,24 +49,23 @@ class Manager
      */
     protected function getPathSafe(): string
     {
-        $path = $_SERVER['DOCUMENT_ROOT'] . $_REQUEST['path'];
+        $path = $this->rootDir . $_REQUEST['path'];
         return str_contains($path, '..') ? '' : $path;
     }
 
     /**
      * Returns a tree of directories by the path
-     * @param $parent Parent directory
+     * @param string $parent Parent directory
      * @return array
      */
-    protected function getTree($parent = ''): array
+    protected function getTree(string $parent = ''): array
     {
         if (!($path = $parent ?: $this->getPathSafe())) {
             return [];
         }
 
         $out = [];
-        foreach (new \DirectoryIterator($path) as $dir)
-        {
+        foreach (new \DirectoryIterator($path) as $dir) {
             if (!$dir->isDir()) {
                 continue;
             }
@@ -85,8 +93,7 @@ class Manager
         $includeDirs = $_REQUEST['include_dirs'];
 
         $out = [];
-        foreach (new \DirectoryIterator($path) as $dir)
-        {
+        foreach (new \DirectoryIterator($path) as $dir) {
             if ($dir->isDir()) {
                 if (!$includeDirs) {
                     continue;
@@ -99,10 +106,10 @@ class Manager
                 ];
             } else {
                 $out[] = [
-                    'type' => 'file',
-                    'name' => $dir->getFilename(),
-                    'path' => $dir->getPath(),
-                ] + $this->getFileInfo($dir);
+                        'type' => 'file',
+                        'name' => $dir->getFilename(),
+                        'path' => $dir->getPath(),
+                    ] + $this->getFileInfo($dir);
             }
         }
 
@@ -123,8 +130,7 @@ class Manager
 
         // test if this file is an image
         $isPic = false;
-        switch (strtolower($ext))
-        {
+        switch (strtolower($ext)) {
             case 'jpg':
             case 'png':
             case 'webp':
@@ -184,8 +190,7 @@ class Manager
             return ['error' => 'invalid_path'];
         }
 
-        unlink($path);
-        return ['error' => ''];
+        return ['error' => unlink($path) ? '' : 'no_permissions'];
     }
 
     /**
@@ -203,8 +208,7 @@ class Manager
             return ['error' => 'invalid_name'];
         }
 
-        mkdir($path . '/' . $dirName);
-        return ['error' => ''];
+        return ['error' => mkdir($path . '/' . $dirName) ? '' : 'no_permissions'];
     }
 
     /**
@@ -224,9 +228,7 @@ class Manager
 
         // extract the directory of the path
         $parentPath = dirname($path);
-
-        rename($path, $parentPath . '/' . $newName);
-        return ['error' => ''];
+        return ['error' => rename($path, $parentPath . '/' . $newName) ? '' : 'no_permissions'];
     }
 
     /**
@@ -247,11 +249,40 @@ class Manager
     }
 
     /**
+     * Converts PHP ini byte parameter to int representation
+     * @param string $ini
+     * @return int
+     */
+    protected function convertToBytes(string $ini): int
+    {
+        // test if it doesn't end with anything
+        if ((string)(int)$ini == $ini) {
+            return (int)$ini;
+        }
+
+        $num = (int)substr($ini, 0, strlen($ini) - 1);
+        $cnt = substr($ini, strlen($ini) - 1);
+
+        // convert
+        return match (strtoupper($cnt)) {
+            'K' => $num * 1024,
+            'M' => $num * 1024 * 1024,
+            'G' => $num * 1024 * 1024 * 1024,
+            default => $num,
+        };
+    }
+
+    /**
      * Handle uploaded files
      * @return array|string[]
      */
     protected function upload(): array
     {
+        // test post size
+        if (($_SERVER['CONTENT_LENGTH']) ?? 0 > $this->convertToBytes(ini_get('post_max_size'))) {
+            return ['error' => 'file_too_large'];
+        }
+
         if (!($path = $this->getPathSafe())) {
             return ['error' => 'invalid_path'];
         }
@@ -280,8 +311,7 @@ class Manager
                     continue 2;
             }
 
-            move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']);
-            $fileStatus[] = 'ok';
+            $fileStatus[] = move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']) ? 'ok' : 'error_save';
         }
 
         return $fileStatus;
