@@ -128,6 +128,8 @@ class Manager
         $ext = explode('.', $it->getFilename());
         if (count($ext) > 1) {
             $ext = $ext[count($ext) - 1];
+        } else {
+            $ext = $ext[0];
         }
 
         // test if this file is an image
