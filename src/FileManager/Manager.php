@@ -12,6 +12,7 @@ class Manager
 
     public function __construct(string $root, $authFn)
     {
+        error_reporting(0);
         $this->rootDir = $root;
         $this->testAuthFn = $authFn;
     }
@@ -101,10 +102,26 @@ class Manager
                     continue;
                 }
 
+                // loop through insides and find out element count and last change date
+                $elCnt = 0;
+                $lastDate = 0;
+                foreach (new \DirectoryIterator($dir->getPath() . '/' . $dir->getFilename()) as $d2) {
+                    if (in_array($d2->getFilename(), ['..', '.'])) {
+                        continue;
+                    }
+
+                    ++$elCnt;
+                    if (!$d2->isDir() && $lastDate < $d2->getMTime()) {
+                        $lastDate = $d2->getMTime();
+                    }
+                }
+
                 $out[] = [
                     'type' => 'dir',
                     'name' => $dir->getFilename(),
-                    'path' => $filePath
+                    'path' => $filePath,
+                    'count' => $elCnt,
+                    'edited' => $lastDate ? date('d.m.Y H:i', $lastDate) : ''
                 ];
             } else {
                 $out[] = [
@@ -184,6 +201,23 @@ class Manager
         ];
     }
 
+    protected function rm(string $path)
+    {
+        if (is_dir($path)) {
+            foreach (scandir($path) as $f) {
+                if ($f != '.' && $f != '..') {
+                    if (!$this->rm($path)) {
+                        return false;
+                    }
+                }
+            }
+
+            return rmdir($path);
+        } else {
+            return unlink($path);
+        }
+    }
+
     /**
      * Deletes the file by path
      * @return string[]
@@ -194,7 +228,7 @@ class Manager
             return ['error' => 'invalid_path'];
         }
 
-        return ['error' => unlink($path) ? '' : 'no_permissions'];
+        return ['error' => $this->rm($path) ? '' : 'no_permissions'];
     }
 
     /**
@@ -274,6 +308,23 @@ class Manager
             'G' => $num * 1024 * 1024 * 1024,
             default => $num,
         };
+    }
+
+    #[NoReturn]
+    protected function download()
+    {
+        if (!($path = $this->getPathSafe())) {
+            return ['error' => 'invalid_path'];
+        }
+
+        $name = explode('/', $path);
+        $name = $name[count($name) - 1];
+
+        $data = file_get_contents($path);
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename=' . $name);
+        echo $data;
+        exit;
     }
 
     /**
