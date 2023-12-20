@@ -206,7 +206,7 @@ class Manager
         if (is_dir($path)) {
             foreach (scandir($path) as $f) {
                 if ($f != '.' && $f != '..') {
-                    if (!$this->rm($path)) {
+                    if (!$this->rm($path . '/' . $f)) {
                         return false;
                     }
                 }
@@ -386,7 +386,7 @@ class Manager
                     continue 2;
             }
 
-            $fileStatus[] = move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']) ? 'ok' : 'error_save';
+            $fileStatus[] = move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']) ? str_replace($this->rootDir, '', $path . '/' . $file['name']) : 'error_save';
         }
 
         return $fileStatus;
