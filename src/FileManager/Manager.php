@@ -228,6 +228,10 @@ class Manager
             return ['error' => 'invalid_path'];
         }
 
+        if (!is_file($path) && !is_dir($path)) {
+            return ['error' => 'does_not_exist'];
+        }
+
         return ['error' => $this->rm($path) ? '' : 'no_permissions'];
     }
 
@@ -239,6 +243,10 @@ class Manager
     {
         if (!($path = $this->getPathSafe())) {
             return ['error' => 'invalid_path'];
+        }
+
+        if (!is_file($path) && !is_dir($path)) {
+            return ['error' => 'does_not_exist'];
         }
 
         $dirName = $_REQUEST['name'];
@@ -259,6 +267,10 @@ class Manager
             return ['error' => 'invalid_path'];
         }
 
+        if (!is_file($path) && !is_dir($path)) {
+            return ['error' => 'does_not_exist'];
+        }
+
         $newName = $_REQUEST['name'];
         if (str_contains($newName, '..')) {
             return ['error' => 'invalid_name'];
@@ -266,6 +278,10 @@ class Manager
 
         // extract the directory of the path
         $parentPath = dirname($path);
+        if (is_file($parentPath . '/' . $newName) || is_dir($parentPath . '/' . $newName)) {
+            return ['error' => 'already_exists'];
+        }
+
         return ['error' => rename($path, $parentPath . '/' . $newName) ? '' : 'no_permissions'];
     }
 
@@ -317,6 +333,10 @@ class Manager
             return ['error' => 'invalid_path'];
         }
 
+        if (!is_file($path) && !is_dir($path)) {
+            return ['error' => 'does_not_exist'];
+        }
+
         $name = explode('/', $path);
         $name = $name[count($name) - 1];
 
@@ -334,7 +354,7 @@ class Manager
     protected function upload(): array
     {
         // test post size
-        if (($_SERVER['CONTENT_LENGTH']) ?? 0 > $this->convertToBytes(ini_get('post_max_size'))) {
+        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $this->convertToBytes(ini_get('post_max_size'))) {
             return ['error' => 'file_too_large'];
         }
 
