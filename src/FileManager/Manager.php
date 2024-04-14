@@ -12,7 +12,6 @@ class Manager
 
     public function __construct(string $root, $authFn)
     {
-        error_reporting(0);
         $this->rootDir = $root;
         $this->testAuthFn = $authFn;
     }

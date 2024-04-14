@@ -28,7 +28,8 @@ class Modal {
 
 
 class ModalDelete extends Modal {
-    constructor(selector, trigger, callback = () => { }) {
+    constructor(selector, trigger, callback = () => {
+    }) {
         super(selector, trigger);
         this.callback = callback;
         this.title = this.modal.querySelector('.modal__title');
@@ -122,7 +123,7 @@ class ModalFileUploader extends Modal {
         this.callback = callback;
 
         this.path = '/';
-        
+
         this.modal.querySelectorAll('.js--fm-modal-file-save').forEach(item => {
             item.addEventListener('click', () => {
                 this.onSave();
@@ -163,6 +164,7 @@ function iniitTextFields() {
         })
     });
 }
+
 function removeFileExtenstion(filename) {
     return filename.replace(/\.[^/.]+$/, "")
 }
@@ -202,18 +204,16 @@ function copyToClipboard(text) {
     return new Promise((resolve, reject) => {
         if (typeof navigator !== "undefined" && typeof navigator.clipboard !== "undefined" && navigator.permissions !== "undefined") {
             const type = "text/plain";
-            const blob = new Blob([text], { type });
-            const data = [new ClipboardItem({ [type]: blob })];
-            navigator.permissions.query({ name: "clipboard-write" }).then((permission) => {
+            const blob = new Blob([text], {type});
+            const data = [new ClipboardItem({[type]: blob})];
+            navigator.permissions.query({name: "clipboard-write"}).then((permission) => {
                 if (permission.state === "granted" || permission.state === "prompt") {
                     navigator.clipboard.write(data).then(resolve, reject).catch(reject);
-                }
-                else {
+                } else {
                     reject(new Error("Permission not granted!"));
                 }
             });
-        }
-        else if (document.queryCommandSupported && document.queryCommandSupported("copy")) {
+        } else if (document.queryCommandSupported && document.queryCommandSupported("copy")) {
             const textarea = document.createElement("textarea");
             textarea.textContent = text;
             textarea.style.position = "fixed";
@@ -231,13 +231,11 @@ function copyToClipboard(text) {
                 document.execCommand("copy");
                 document.body.removeChild(textarea);
                 resolve();
-            }
-            catch (e) {
+            } catch (e) {
                 document.body.removeChild(textarea);
                 reject(e);
             }
-        }
-        else {
+        } else {
             reject(new Error("None of copying methods are supported by this browser!"));
         }
     });
@@ -286,77 +284,76 @@ async function download(url, filename) {
 */
 
 class ContextMenu {
-  constructor(root, items) {
-    this.root = root;
-    this.items = items;
-    this.content = null;
-    this.isShow = false;
+    constructor(root, items) {
+        this.root = root;
+        this.items = items;
+        this.content = null;
+        this.isShow = false;
 
-    this.events();
-  }
-
-  events() {
-    window.addEventListener('resize', () => {
-      this.hide();
-    });
-
-    handleOutsideClick(this.root, () => this.hide());
-  }
-
-  #renderTemplate(ev) {
-    const ulElement = document.createElement('ul');
-    ulElement.classList.add('context-menu__items');
-
-
-    this.items.forEach(item => {
-      const liElement = document.createElement('li');
-      liElement.classList.add('context-menu__item');
-
-      const buttonElement = document.createElement('button');
-      buttonElement.classList.add('context-menu__link');
-      buttonElement.textContent = item.name;
-      buttonElement.setAttribute('tabindex', '0');
-
-      buttonElement.addEventListener('click', () => {
-        item.callback(ev);
-        this.hide();
-      });
-
-      liElement.appendChild(buttonElement);
-      ulElement.appendChild(liElement);
-
-
-    });
-
-    this.content = ulElement;
-    this.root.appendChild(ulElement);
-  }
-
-
-  show(ev) {
-
-    if (!this.isShow) {
-      this.#renderTemplate(ev);
+        this.events();
     }
 
-    this.root.classList.add('context-menu_active');
-    this.isShow = true;
-    this.root.focus();
-    this.root.setAttribute('tabindex', '0');
-    this.root.style.display = 'block';
-    this.root.style.left = `${ev.clientX}px`;
-    this.root.style.top = `${ev.clientY}px`;
+    events() {
+        window.addEventListener('resize', () => {
+            this.hide();
+        });
 
-
-
-  }
-
-  hide() {
-    if (this.content) {
-      this.isShow = false;
-      this.content.remove();
+        handleOutsideClick(this.root, () => this.hide());
     }
-  }
+
+    #renderTemplate(ev) {
+        const ulElement = document.createElement('ul');
+        ulElement.classList.add('context-menu__items');
+
+
+        this.items.forEach(item => {
+            const liElement = document.createElement('li');
+            liElement.classList.add('context-menu__item');
+
+            const buttonElement = document.createElement('button');
+            buttonElement.classList.add('context-menu__link');
+            buttonElement.textContent = item.name;
+            buttonElement.setAttribute('tabindex', '0');
+
+            buttonElement.addEventListener('click', () => {
+                item.callback(ev);
+                this.hide();
+            });
+
+            liElement.appendChild(buttonElement);
+            ulElement.appendChild(liElement);
+
+
+        });
+
+        this.content = ulElement;
+        this.root.appendChild(ulElement);
+    }
+
+
+    show(ev) {
+
+        if (!this.isShow) {
+            this.#renderTemplate(ev);
+        }
+
+        this.root.classList.add('context-menu_active');
+        this.isShow = true;
+        this.root.focus();
+        this.root.setAttribute('tabindex', '0');
+        this.root.style.display = 'block';
+        this.root.style.left = `${ev.clientX}px`;
+        this.root.style.top = `${ev.clientY}px`;
+
+
+    }
+
+    hide() {
+        if (this.content) {
+            this.isShow = false;
+            this.content.remove();
+        }
+    }
 }
 
 
@@ -367,39 +364,40 @@ class ContextMenu {
  */
 
 class Toolbar {
-  constructor(selector, items) {
-    this.root = document.querySelector(selector);
-    this.items = items;
+    constructor(selector, items) {
+        this.root = document.querySelector(selector);
+        this.items = items;
 
-    this.#renderTemplate();
-  }
+        this.#renderTemplate();
+    }
 
-  open() {
-    this.root.classList.add('f-manager__tapbar_active');
-  }
+    open() {
+        this.root.classList.add('f-manager__tapbar_active');
+    }
 
-  close() {
-    this.root.classList.remove('f-manager__tapbar_active');
-  }
+    close() {
+        this.root.classList.remove('f-manager__tapbar_active');
+    }
 
-  #renderTemplate() {
-    this.items.forEach(item => {
-      const buttonElement = document.createElement('button');
-      buttonElement.classList.add('f-manager__tapbar-control', 'btn-menu');
+    #renderTemplate() {
+        this.items.forEach(item => {
+            const buttonElement = document.createElement('button');
+            buttonElement.classList.add('f-manager__tapbar-control', 'btn-menu');
 
-      buttonElement.innerHTML = `
+            buttonElement.innerHTML = `
       <i class="btn-menu__icon">
         ${item.icon}
       </i>
       <span class="btn-menu__text">${item.name}</span>
       `;
 
-      buttonElement.addEventListener('click', item.callback);
+            buttonElement.addEventListener('click', item.callback);
 
-      this.root.appendChild(buttonElement);
-    });
-  }
+            this.root.appendChild(buttonElement);
+        });
+    }
 }
+
 class Accordion {
     constructor(el) {
         // Store the <details> element
@@ -528,67 +526,67 @@ document.querySelectorAll('details').forEach((el) => {
 
 
 class NotificationStack {
-	constructor(root, options) {
-		this.stack = document.createElement("div");
-		this.stack.className = "notifications";
+    constructor(root, options) {
+        this.stack = document.createElement("div");
+        this.stack.className = "notifications";
 
-		if (root) {
-			root.appendChild(this.stack);
-		} else {
-			document.querySelector('body').appendChild(this.stack);
-		}
-	}
+        if (root) {
+            root.appendChild(this.stack);
+        } else {
+            document.querySelector('body').appendChild(this.stack);
+        }
+    }
 
-	addNotification(options) {
-		const notify = new Notification(this.stack, options);
+    addNotification(options) {
+        const notify = new Notification(this.stack, options);
 
-		setTimeout(() => {
-			notify.hide();
-		}, 3000)
+        setTimeout(() => {
+            notify.hide();
+        }, 3000)
 
-		return notify;
-	}
+        return notify;
+    }
 }
 
 class Notification {
-	constructor(stack, options) {
-		this.stack = stack;
-		this.options = options;
+    constructor(stack, options) {
+        this.stack = stack;
+        this.options = options;
 
-		this.title = (typeof options.title !== 'undefined') ? options.title : false;
-		this.linkText = (typeof options.linkText !== 'undefined') ? options.linkText : false;
-		this.link = (typeof options.link !== 'undefined') ? options.link : false;
-		this.callback = (typeof options.callback !== 'undefined') ? options.callback : false;
+        this.title = (typeof options.title !== 'undefined') ? options.title : false;
+        this.linkText = (typeof options.linkText !== 'undefined') ? options.linkText : false;
+        this.link = (typeof options.link !== 'undefined') ? options.link : false;
+        this.callback = (typeof options.callback !== 'undefined') ? options.callback : false;
 
-		this.autoHide = (typeof options.autoHide !== 'undefined') ? options.autoHide : false;
-		this.onClick = (typeof options.onClick !== 'undefined') ? options.onClick : false;
-		this.priority = (typeof options.priority !== 'undefined') ? options.priority : false;
+        this.autoHide = (typeof options.autoHide !== 'undefined') ? options.autoHide : false;
+        this.onClick = (typeof options.onClick !== 'undefined') ? options.onClick : false;
+        this.priority = (typeof options.priority !== 'undefined') ? options.priority : false;
 
 
-		let notificationTemplate = `
+        let notificationTemplate = `
 		<div class="notification notification_active">
 			${this.title ? `<span class="notification__text">${this.title}</span>` : ''}
 			${this.linkText ? `<a href="${this.link ? this.link : '#'}" class="notification__link">${this.linkText}</a>` : ''}
 		</div>
 		`;
 
-		this.element = document.createElement("div");
-		this.element.className = ' notification-wrapper in';
-		this.element.innerHTML = notificationTemplate;
+        this.element = document.createElement("div");
+        this.element.className = ' notification-wrapper in';
+        this.element.innerHTML = notificationTemplate;
 
-		if (this.callback) {
-			this.element.querySelector('.notification__link').addEventListener('click', () => this.callback());
-		}
+        if (this.callback) {
+            this.element.querySelector('.notification__link').addEventListener('click', () => this.callback());
+        }
 
-		this.stack.prepend(this.element);
+        this.stack.prepend(this.element);
 
-		return this;
-	}
+        return this;
+    }
 
-	hide() {
-		this.element.classList.add('collapsed');
-		setTimeout(() => this.element.remove(), 600);
-	}
+    hide() {
+        this.element.classList.add('collapsed');
+        setTimeout(() => this.element.remove(), 600);
+    }
 }
 
 const folderContext = document.getElementById('folder-context-menu');
@@ -640,10 +638,14 @@ const FileManager = {
      * Фокус в модалке + ентер на отправку
      * DONE: Мисс клик по файлу
      * DONE: При клику на рефреш, открывать дерево заного на ту позицую где был юзер
-     * 
+     *
      */
 
     init(callback) {
+        this.root.classList.add('active');
+        if (this.workspace) {
+            return;
+        }
 
         this.workspace = this.root.querySelector('.f-manager');
         this.tree = this.root.querySelector('.f-manager__tree');
@@ -678,7 +680,9 @@ const FileManager = {
             },
             {
                 name: 'Загрузить',
-                callback: () => { this.modalFiles.open() },
+                callback: () => {
+                    this.modalFiles.open()
+                },
                 icon: `
                 <svg xmlns="http://www.w3.org/2000/svg" width="25" height="24" viewBox="0 0 25 24" fill="none">
                     <path
@@ -689,7 +693,9 @@ const FileManager = {
             },
             {
                 name: 'Создать',
-                callback: () => { this.modalCreate.open(); },
+                callback: () => {
+                    this.modalCreate.open();
+                },
                 icon: `
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
                     <path
@@ -714,7 +720,9 @@ const FileManager = {
             },
             {
                 name: 'Готово',
-                callback: () => { this.onSave() },
+                callback: () => {
+                    this.onSave()
+                },
                 icon: `
                 <svg xmlns="http://www.w3.org/2000/svg" width="25" height="24" viewBox="0 0 25 24" fill="none">
                     <path d="M5.20007 12L10.2001 17L19.2001 8" stroke="#1461CC" stroke-width="2" stroke-linecap="round"
@@ -802,7 +810,8 @@ const FileManager = {
                         callback: () => {
                             this._onFolderDelete(replaceLastPathElement(this.curDirPath, ''));
                         }
-                    }); 1
+                    });
+                    1
                 },
                 icon: `
                 <svg xmlns="http://www.w3.org/2000/svg" width="25" height="24" viewBox="0 0 25 24" fill="none">
@@ -816,7 +825,7 @@ const FileManager = {
         this.toolbarFile = new Toolbar('#f-tapbar-file', [
             {
                 name: 'Отмена',
-                callback: () => { 
+                callback: () => {
                     this.filesMobile.querySelectorAll('.file-card-mob').forEach((file) => {
                         file.classList.remove('file-card-mob_active');
                         this.curFilePath = '';
@@ -832,7 +841,7 @@ const FileManager = {
             },
             {
                 name: 'Скачать',
-                callback: () => { 
+                callback: () => {
                     const filename = this.curFilePath.split("/").pop();
                     download(this.apiBase + `?method=download&path=${this.curFilePath}`, filename).then(() => {
                         this.notify.addNotification({
@@ -848,13 +857,13 @@ const FileManager = {
             },
             {
                 name: 'Путь',
-                callback: () => { 
+                callback: () => {
                     copyToClipboard(this.curFilePath);
 
                     this.notify.addNotification({
                         title: 'Путь скопирован',
                     });
-                 },
+                },
                 icon: `
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
                     <path d="M8 8V5.2C8 4.0799 8 3.51984 8.21799 3.09202C8.40973 2.71569 8.71569 2.40973 9.09202 2.21799C9.51984 2 10.0799 2 11.2 2H18.8C19.9201 2 20.4802 2 20.908 2.21799C21.2843 2.40973 21.5903 2.71569 21.782 3.09202C22 3.51984 22 4.0799 22 5.2V12.8C22 13.9201 22 14.4802 21.782 14.908C21.5903 15.2843 21.2843 15.5903 20.908 15.782C20.4802 16 19.9201 16 18.8 16H16M5.2 22H12.8C13.9201 22 14.4802 22 14.908 21.782C15.2843 21.5903 15.5903 21.2843 15.782 20.908C16 20.4802 16 19.9201 16 18.8V11.2C16 10.0799 16 9.51984 15.782 9.09202C15.5903 8.71569 15.2843 8.40973 14.908 8.21799C14.4802 8 13.9201 8 12.8 8H5.2C4.0799 8 3.51984 8 3.09202 8.21799C2.71569 8.40973 2.40973 8.71569 2.21799 9.09202C2 9.51984 2 10.0799 2 11.2V18.8C2 19.9201 2 20.4802 2.21799 20.908C2.40973 21.2843 2.71569 21.5903 3.09202 21.782C3.51984 22 4.07989 22 5.2 22Z" stroke="#1461CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -863,7 +872,7 @@ const FileManager = {
             },
             {
                 name: 'Изменить',
-                callback: (ev) => { 
+                callback: (ev) => {
                     const filename = this.curFilePath.split("/").pop();
                     this.curDirPath = replaceLastPathElement(this.curFilePath, '');
 
@@ -883,7 +892,7 @@ const FileManager = {
             },
             {
                 name: 'Удалить',
-                callback: () => { 
+                callback: () => {
                     this.modalDelete.open({
                         title: 'Удалить файл',
                         callback: () => {
@@ -916,7 +925,7 @@ const FileManager = {
                 callback: (ev) => {
                     const path = ev.target.getAttribute('path');
                     const name = ev.target.dataset.name;
-                    
+
                     this.modalRename.open({
                         callback: (name) => {
                             this._renameFile(path, name);
@@ -1088,7 +1097,9 @@ const FileManager = {
             item.addEventListener('click', () => {
                 this.modalDelete.open({
                     title: 'Удалить файл',
-                    callback: () => { this._onFileDelete(); }
+                    callback: () => {
+                        this._onFileDelete();
+                    }
                 });
             });
         });
@@ -1097,7 +1108,9 @@ const FileManager = {
             item.addEventListener('click', () => {
                 this.modalDelete.open({
                     title: 'Удалить папку',
-                    callback: () => { this._onFolderDelete(); }
+                    callback: () => {
+                        this._onFolderDelete();
+                    }
                 });
             });
         });
@@ -1422,7 +1435,7 @@ const FileManager = {
 
     _copyFolderPath(ev) {
         const path = '' + ev.target.dataset.path;
-        // copy(path);
+        copyToClipboard(path);
 
         this.notify.addNotification({
             title: 'Путь скопирован',
@@ -1446,7 +1459,7 @@ const FileManager = {
     },
     _copyFilePath(ev) {
         const path = '' + ev.target.getAttribute('path');
-        copy(path);
+        copyToClipboard(path);
 
         this.notify.addNotification({
             title: 'Путь скопирован',
@@ -1695,7 +1708,7 @@ const FileManager = {
                     div.classList.remove('f-card_active');
                     this._updateFileInfo();
                 }
-            } catch( err ) {
+            } catch (err) {
                 window.removeEventListener("click", onClickOutside);
             }
         };
@@ -1720,11 +1733,11 @@ const FileManager = {
               <span class="folder-card-mob__title">${folder.name}</span>
               <div class="folder-card-mob__params">
                 ${folder.count ?
-                `
+            `
                     <span class="folder-card-mob__params-item folder-card-mob__params-item_date">${folder.edited}</span>
                     <span class="folder-card-mob__params-item folder-card-mob__params-item_size"> ${formatEnding(folder.count, ['файл', 'файла', 'файлов'])}</span>
                     ` : ''
-            }
+        }
               </div>
             </div>
         `;
@@ -1751,7 +1764,6 @@ const FileManager = {
 
             div.classList.add('folder-card-mob_active');
             this._activateMobileTapbar(this.toolbarFolder);
-
 
 
         });
@@ -1851,11 +1863,11 @@ const FileManager = {
 
     onSave() {
         this.callback(this.curFilePath);
-        this.root.remove();
+        this.root.classList.remove('active');
     },
 
     close() {
-        this.root.remove();
+        this.root.classList.remove('active');
     },
 };
 
@@ -1945,7 +1957,7 @@ const dropArea = (area, handleDrop) => {
         let totalProgress = 0;
 
         btnUpload.addEventListener('click', (ev) => {
-            fileInput.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            fileInput.dispatchEvent(new MouseEvent('click', {bubbles: true}));
         })
 
         btnCancelUploads.addEventListener('click', (ev) => {
@@ -2011,13 +2023,10 @@ const dropArea = (area, handleDrop) => {
             } else {
                 // Перебираем выбранные файлы и отображаем их в списке
                 for (const file of files) {
-                    if (file.type.startsWith('image/')) {
-                        selectedFiles.push(file);
+                    selectedFiles.push(file);
 
-                        fileProgressTotal.style.width = `${totalProgress}%`;
-                    }
+                    fileProgressTotal.style.width = `${totalProgress}%`;
                 }
-
 
 
                 updateFileList();
@@ -2056,7 +2065,7 @@ const dropArea = (area, handleDrop) => {
         function deleteFile(fileName, path) {
             const listItem = fileList.querySelector(`.file-uploader__file[data-file="${fileName}"]`);
 
-            fetch("http://fmtest.master.et9.ru:10580/bootstrap.php?method=delete&path=" + path);
+            fetch(fileManager.apiBase + '?method=delete&path=' + path);
 
 
             if (listItem) {
@@ -2080,7 +2089,7 @@ const dropArea = (area, handleDrop) => {
         }
 
         function renderFile(file) {
-            const { name, size } = file;
+            const {name, size} = file;
 
             const formData = new FormData();
             formData.append('file[]', file);
@@ -2222,7 +2231,7 @@ const dropArea = (area, handleDrop) => {
 
             req.addEventListener('load', function (ev) {
                 if (ev.target.status === 200) {
-                    const { data } = JSON.parse(ev.target.response);
+                    const {data} = JSON.parse(ev.target.response);
 
                     fileUploaderFile.classList.remove('file-uploader-file--loading');
 
@@ -2249,11 +2258,10 @@ const dropArea = (area, handleDrop) => {
 
             // req.
 
-            req.open('POST', 'http://fmtest.master.et9.ru:10580/bootstrap.php?method=upload&path=' + fileInput.dataset.path);
+            req.open('POST', fileManager.apiBase + '?method=upload&path=' + fileInput.dataset.path);
             // formData.append('path', fileInput.dataset.path);
             // formData.append('method', 'upload');
 
-            
 
             req.timeout = 45000;
             req.send(formData);
