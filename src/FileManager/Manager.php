@@ -202,6 +202,19 @@ class Manager
 
     protected function rm(string $path)
     {
+        // Очищаем пути от лишних слэшей для точного сравнения
+        $realPath = realpath($path);
+        $realRoot = realpath($this->rootDir);
+
+        // Защита: если путь не существует или он находится ВНЕ корневой папки
+        if (!$realPath || !$realRoot || strpos($realPath, $realRoot) !== 0) {
+            return false;
+        }
+
+        if ($realPath === $realRoot) {
+            return false;
+        }
+
         if (is_dir($path)) {
             foreach (scandir($path) as $f) {
                 if ($f != '.' && $f != '..') {
@@ -212,9 +225,9 @@ class Manager
             }
 
             return rmdir($path);
-        } else {
-            return unlink($path);
         }
+
+        return unlink($path);
     }
 
     /**
