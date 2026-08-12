@@ -808,7 +808,7 @@ const FileManager = {
                     this.modalDelete.open({
                         title: 'Удалить папку',
                         callback: () => {
-                            this._onFolderDelete(replaceLastPathElement(this.curDirPath, ''));
+                            this._onFolderDelete(undefined, replaceLastPathElement(this.curDirPath, ''));
                         }
                     });
                     1
@@ -949,11 +949,14 @@ const FileManager = {
             },
             {
                 name: 'Удалить',
-                callback: () => {
+                callback: (ev) => {
+                    const path = ev.target.getAttribute('path');
+                    const name = ev.target.dataset.name;
+
                     this.modalDelete.open({
-                        title: 'Удалить файл',
+                        title: `Удалить файл "${name}"`,
                         callback: () => {
-                            this._onFileDelete();
+                            this._onFileDelete(path, name);
                         },
                     });
                 },
@@ -997,11 +1000,13 @@ const FileManager = {
             },
             {
                 name: 'Удалить',
-                callback: () => {
+                callback: (ev) => {
+                    const path = ev.target.getAttribute('path');
+
                     this.modalDelete.open({
-                        title: 'Удалить папку',
+                        title: `Удалить папку "${path}"`,
                         callback: () => {
-                            this._onFolderDelete();
+                            this._onFolderDelete(path, '');
                         }
                     });
                 },
@@ -1096,7 +1101,7 @@ const FileManager = {
         this.root.querySelectorAll('.js--fm-delete-file').forEach(item => {
             item.addEventListener('click', () => {
                 this.modalDelete.open({
-                    title: 'Удалить файл',
+                    title: `Удалить файл "${this.currFileName}"`,
                     callback: () => {
                         this._onFileDelete();
                     }
@@ -1107,7 +1112,7 @@ const FileManager = {
         this.root.querySelectorAll('.js--fm-delete-folder').forEach(item => {
             item.addEventListener('click', () => {
                 this.modalDelete.open({
-                    title: 'Удалить папку',
+                    title: `Удалить папку "${this.curDirPath}"`,
                     callback: () => {
                         this._onFolderDelete();
                     }
@@ -1123,10 +1128,18 @@ const FileManager = {
         });
 
         this.root.querySelectorAll('.js--fm-home').forEach(item => {
-            item.addEventListener('click', () => {
+            item.addEventListener('click', e => {
                 this.curDirPath = '';
                 this.curFilePath = '';
+                this._updateTree();
                 this._navigate('');
+
+                // Hide delte control
+                this.root.querySelectorAll('.js--fm-delete-folder').forEach(item => {
+                    item.style.display = 'none';
+                });
+
+                e.stopPropagation();
             });
         });
 
@@ -1141,8 +1154,6 @@ const FileManager = {
                 this.onSave();
             });
         });
-
-
     },
 
     /**
@@ -1613,16 +1624,16 @@ const FileManager = {
         });
     },
 
-    _onFolderDelete(pathForUpdate = '') {
-        this._unlink(this.curDirPath);
+    _onFolderDelete(path = this.curDirPath, pathForUpdate = '') {
+        this._unlink(path);
         this._updateFiles(pathForUpdate);
-        this.curDirPath = replaceLastPathElement(this.curDirPath, '');
+        this.curDirPath = replaceLastPathElement(path, '');
         this._updateTree();
         this._updateBreadcrumbs(this.curDirPath.split("/").at(-2));
 
 
         this.notify.addNotification({
-            title: 'Папка удалена',
+            title: `Папка "${path}" удалена`,
         });
 
         // Hide delte control
@@ -1631,17 +1642,22 @@ const FileManager = {
         });
     },
 
-    _onFileDelete() {
-        this._unlink(this.curFilePath);
+    _onFileDelete(path = this.curFilePath, name = this.currFileName) {
+        this._unlink(path);
         this._updateFiles(this.curDirPath);
 
         this.notify.addNotification({
-            title: 'Файл удален',
+            title: `Файл "${name}" удален`,
         });
 
         // Hide delte control
         this.root.querySelectorAll('.js--fm-delete-file').forEach(item => {
             item.style.display = 'none';
+        });
+
+        // Show delte folder control
+        this.root.querySelectorAll('.js--fm-delete-folder').forEach(item => {
+            item.style.display = 'flex';
         });
     },
 
@@ -1652,9 +1668,13 @@ const FileManager = {
             item.classList.remove('f-card_active');
         });
 
-        // 
+        //
         this.root.querySelectorAll('.js--fm-delete-file').forEach(item => {
             item.style.display = 'flex';
+        });
+
+        this.root.querySelectorAll('.js--fm-delete-folder').forEach(item => {
+            item.style.display = 'none';
         });
 
         this.curFilePath = data.path;
@@ -1707,6 +1727,18 @@ const FileManager = {
                 if (e.target && !e.target.className.includes('f-card')) {
                     div.classList.remove('f-card_active');
                     this._updateFileInfo();
+
+                    // Hide delte control
+                    this.root.querySelectorAll('.js--fm-delete-file').forEach(item => {
+                        item.style.display = 'none';
+                    });
+
+                    // Show delte folder control
+                    if (this.root.querySelector('.link-menu_active')) {
+                        this.root.querySelectorAll('.js--fm-delete-folder').forEach(item => {
+                            item.style.display = 'flex';
+                        });
+                    }
                 }
             } catch (err) {
                 window.removeEventListener("click", onClickOutside);
@@ -1845,7 +1877,8 @@ const FileManager = {
         if (!isLast) {
             span.addEventListener('click', () => {
                 this.curDirPath = path;
-                this._navigate(path)
+                this._navigate(path);
+                this._updateTree();
             });
         }
 
