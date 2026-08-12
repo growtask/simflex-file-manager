@@ -3,7 +3,6 @@
 namespace Simflex\FileManager;
 
 use JetBrains\PhpStorm\NoReturn;
-use Simflex\Core\Log;
 
 class Manager
 {
