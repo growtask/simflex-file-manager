@@ -6,6 +6,36 @@ use JetBrains\PhpStorm\NoReturn;
 
 class Manager
 {
+    /**
+     * Расширения файлов, которые можно загрузить и дать при переименовании (в нижнем регистре): изображения,
+     * документы, архивы, аудио и видео, шрифты. Всё, что веб-сервер может выполнить или отдать как страницу
+     * (php*, phtml, phar, html, htm, xhtml, shtml, svg, js, htaccess и т.п.), не допускается
+     */
+    public const ALLOWED_EXTENSIONS = [
+        // изображения
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic',
+        // документы
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf', 'txt', 'csv',
+        // архивы
+        'zip', 'rar', '7z', 'gz', 'tgz', 'tar', 'bz2',
+        // аудио и видео
+        'mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'mp4', 'm4v', 'webm', 'ogv', 'mov', 'avi', 'mkv',
+        // шрифты
+        'woff', 'woff2', 'ttf', 'otf', 'eot',
+    ];
+
+    /**
+     * Части имени, которые веб-сервер может принять за исполняемое расширение и в середине имени
+     * (file.php.jpg при AddHandler)
+     */
+    protected const EXECUTABLE_NAME_PART = '/^(php\d*|pht|phtml|phar|phps|cgi|pl|py|asp|aspx|jsp|sh|shtml)$/i';
+
+    /** Методы, доступные через параметр запроса method */
+    protected const API_METHODS = ['getTree', 'getFileList', 'download', 'delete', 'createDir', 'rename', 'upload'];
+
+    /** Методы API, которые меняют файлы */
+    protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'upload'];
+
     /** @var callable */
     protected $testAuthFn;
     protected string $rootDir;
@@ -27,12 +57,20 @@ class Manager
             ]);
         }
 
-        // check that the method exists
-        $method = $_REQUEST['method'] ?? '';
-        if (!method_exists($this, $method)) {
+        // вызываются только методы API, а не любые методы класса
+        $method = (string)($_REQUEST['method'] ?? '');
+        if (!in_array($method, self::API_METHODS, true)) {
             $this->sendResponseAndQuit([
                 'success' => false,
                 'error' => 'method_not_found'
+            ]);
+        }
+
+        // изменяющий запрос принимается только со страниц этого же сайта (защита от CSRF)
+        if (in_array($method, self::MODIFYING_METHODS, true) && !$this->isSameOriginRequest()) {
+            $this->sendResponseAndQuit([
+                'success' => false,
+                'error' => 'forbidden'
             ]);
         }
 
@@ -244,6 +282,11 @@ class Manager
             return ['error' => 'does_not_exist'];
         }
 
+        // корень каталога загрузок не удаляется
+        if (rtrim($path, '/') === rtrim($this->rootDir, '/')) {
+            return ['error' => 'invalid_path'];
+        }
+
         return ['error' => $this->rm($path) ? '' : 'no_permissions'];
     }
 
@@ -261,8 +304,8 @@ class Manager
             return ['error' => 'does_not_exist'];
         }
 
-        $dirName = $_REQUEST['name'];
-        if (str_contains($dirName, '..')) {
+        $dirName = (string)($_REQUEST['name'] ?? '');
+        if ($dirName === '' || str_starts_with($dirName, '.') || strpbrk($dirName, "/\\\0") !== false) {
             return ['error' => 'invalid_name'];
         }
 
@@ -283,8 +326,13 @@ class Manager
             return ['error' => 'does_not_exist'];
         }
 
-        $newName = $_REQUEST['name'];
-        if (str_contains($newName, '..')) {
+        $newName = (string)($_REQUEST['name'] ?? '');
+        if ($newName === '' || str_contains($newName, '..') || strpbrk($newName, "/\\\0") !== false) {
+            return ['error' => 'invalid_name'];
+        }
+        // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.); код ошибки - тот, что
+        // фронтенд показывает как «Неверное имя»
+        if (is_file($path) ? !static::isAllowedFileName($newName) : str_starts_with($newName, '.')) {
             return ['error' => 'invalid_name'];
         }
 
@@ -387,21 +435,46 @@ class Manager
                 continue;
             }
 
-            // don't upload possibly malicious files
-            $ext = explode('.', $file['name']);
-            $ext = $ext[count($ext) - 1];
-            switch ($ext) {
-                case 'php':
-                case 'exe':
-                case 'sh':
-                    $fileStatus[] = 'forbidden';
-                    continue 2;
+            // только безопасные типы файлов
+            if (!static::isAllowedFileName((string)$file['name'])) {
+                $fileStatus[] = 'forbidden';
+                continue;
             }
 
             $fileStatus[] = move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']) ? str_replace($this->rootDir, '', $path . '/' . $file['name']) : 'error_save';
         }
 
         return $fileStatus;
+    }
+
+    /**
+     * Можно ли хранить файл с таким именем: расширение из ALLOWED_EXTENSIONS (без учёта регистра), имя не начинается
+     * с точки и не содержит исполняемых частей (file.php.jpg)
+     */
+    public static function isAllowedFileName(string $name): bool
+    {
+        if ($name === '' || str_starts_with($name, '.')) {
+            return false;
+        }
+
+        $parts = explode('.', $name);
+        if (count($parts) < 2) {
+            return false;
+        }
+
+        $extension = strtolower(array_pop($parts));
+        if (!in_array($extension, static::ALLOWED_EXTENSIONS, true)) {
+            return false;
+        }
+
+        // первая часть - само имя, остальные - возможные расширения
+        foreach (array_slice($parts, 1) as $part) {
+            if (preg_match(static::EXECUTABLE_NAME_PART, trim($part))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -412,6 +485,28 @@ class Manager
     {
         $fn = $this->testAuthFn;
         return !$fn || $fn();
+    }
+
+    /**
+     * Запрос отправлен страницей этого же сайта: по Sec-Fetch-Site, иначе по хосту Origin или Referer.
+     * Запрос без этих заголовков (не из браузера) не принимается
+     */
+    protected function isSameOriginRequest(): bool
+    {
+        $fetchSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+        if ($fetchSite !== '') {
+            return $fetchSite === 'same-origin';
+        }
+
+        $source = $_SERVER['HTTP_ORIGIN'] ?? ($_SERVER['HTTP_REFERER'] ?? '');
+        $sourceHost = (string)parse_url($source, PHP_URL_HOST);
+        $sourcePort = parse_url($source, PHP_URL_PORT);
+        $host = (string)($_SERVER['HTTP_HOST'] ?? '');
+        if ($sourceHost === '' || $host === '') {
+            return false;
+        }
+
+        return strcasecmp($sourceHost . ($sourcePort ? ':' . $sourcePort : ''), $host) === 0;
     }
 
     /**
