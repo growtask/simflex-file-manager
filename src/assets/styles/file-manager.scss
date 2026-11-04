@@ -1,0 +1,789 @@
+/*
+ * Файловый менеджер (Figma SimflexCMS, страница Way-File): окно file-window на Common/Modal, дерево file-tree-row,
+ * карточки file-card (на планшете и телефоне — строки file-card-mobile), кнопки file-tool, нижняя панель
+ * file-tabbar, меню file-menu, окна file-modal. Собирается со стилями админки ядра (LayoutManager::useStyle()):
+ * токены цветов, размеры vw()/spacing(), шрифты — ядра; своих цветов нет.
+ * Desktop: окно 920 × 562, дерево слева. Планшет и телефон: окно на весь экран, список без дерева, нижняя панель.
+ */
+.file-window,
+.file-menu {
+    --fm-bg: var(--color-main-gray-white);
+    --fm-panel: var(--color-main-color1-lighter);
+    --fm-line: var(--color-main-gray-lighter);
+    --fm-text: var(--color-text-icon-gray-darker);
+    --fm-muted: var(--color-text-icon-gray-medium);
+    --fm-accent: var(--color-text-icon-color1-main);
+    --fm-hover: color-mix(in srgb, var(--color-main-color1-lighter) 60%, transparent);
+    --fm-active: var(--color-main-color1-lighter);
+    --fm-selected: color-mix(in srgb, var(--color-main-color1-light) 45%, transparent);
+    --fm-card: var(--color-main-color1-lighter);
+    --fm-icon: var(--color-text-icon-color1-main);
+}
+
+.file-window-theme_dark,
+.file-menu-theme_dark {
+    --fm-bg: var(--color-main-gray-darker);
+    --fm-panel: var(--color-main-gray-dark);
+    --fm-line: var(--color-main-gray-dark);
+    --fm-text: var(--color-text-icon-gray-white);
+    --fm-muted: var(--color-text-icon-gray-light);
+    --fm-accent: var(--color-text-icon-color1-light);
+    --fm-hover: color-mix(in srgb, var(--color-main-gray-dark) 70%, transparent);
+    --fm-active: var(--color-main-gray-dark);
+    --fm-selected: color-mix(in srgb, var(--color-main-color1-main) 35%, transparent);
+    --fm-card: var(--color-main-gray-dark);
+    --fm-icon: var(--color-text-icon-gray-white);
+}
+
+.fm-icon {
+    flex-shrink: 0;
+    @include spacing(width, 24px);
+    @include spacing(height, 24px);
+}
+
+/* Окно: размеры и отступы Common/Modal заменены своими (.modal — сильнее размеров окна modal-size_*) */
+.file-window.modal {
+    .modal__dialog {
+        overflow: hidden;
+        background: var(--fm-bg);
+        color: var(--fm-text);
+        border-radius: var(--radius-ui-xlarge);
+        @include spacing(max-width, 920px);
+        @include spacing(height, 562px);
+    }
+
+    .modal__close {
+        display: none;
+    }
+
+    .modal__content {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        gap: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+
+    .modal__body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+    }
+}
+
+.file-window {
+    &__head {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--fm-line);
+        @include spacing(height, 56px);
+        @include spacing(padding-inline, 8px);
+        @include spacing(gap, 8px);
+    }
+
+    &__crumbs {
+        display: flex;
+        align-items: center;
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+        white-space: nowrap;
+        @include spacing(gap, 8px);
+        @include ui-m;
+    }
+
+    &__crumb {
+        flex-shrink: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+
+        &::before {
+            content: '/';
+            color: var(--fm-muted);
+            @include spacing(margin-right, 8px);
+        }
+
+        &:hover {
+            color: var(--fm-accent);
+        }
+
+        &_current {
+            color: var(--fm-accent);
+            cursor: default;
+        }
+    }
+
+    &__body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+    }
+
+    &__side {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        border-right: 1px solid var(--fm-line);
+        @include spacing(width, 220px);
+    }
+
+    &__tree {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        @include spacing(padding-block, 4px);
+        @include scrollbar(classic, s);
+    }
+
+    &__tools {
+        display: flex;
+        flex-shrink: 0;
+        background: var(--fm-panel);
+        @include spacing(padding, 8px);
+        @include spacing(gap, 4px);
+    }
+
+    &__main {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-width: 0;
+    }
+
+    &__toolbar {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        @include spacing(height, 56px);
+        @include spacing(padding-inline, 12px);
+        @include spacing(gap, 8px);
+    }
+
+    // поиск растягивается, сортировка — по ширине макета (сильнее ширины Dropdown и TextInput)
+    &__toolbar &__search {
+        flex: 1;
+        min-width: 0;
+    }
+
+    &__toolbar &__sort {
+        flex: 0 0 auto;
+        border-left: 1px solid var(--fm-line);
+        @include spacing(padding-left, 8px);
+        @include spacing(width, 176px);
+    }
+
+    &__board {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        @include spacing(padding, 4px, 4px, 0, 0);
+        @include spacing(padding-inline, 12px, 12px, 0, 0);
+        @include scrollbar(classic, s);
+    }
+
+    &__files {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(#{vw(160px)}, 1fr));
+        align-content: start;
+        @include spacing(gap, 12px, 12px, 0, 0);
+        @include spacing(padding-bottom, 12px, 12px, 0, 0);
+    }
+
+    &__state {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        @include spacing(gap, 8px);
+        @include spacing(padding, 24px);
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    &__state-icon {
+        color: var(--fm-icon);
+        @include spacing(width, 48px);
+        @include spacing(height, 48px);
+    }
+
+    &__state-title {
+        margin: 0;
+        @include ui-m;
+    }
+
+    &__state-text {
+        margin: 0;
+        color: var(--fm-muted);
+        @include t3;
+    }
+
+    &__bottom {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        background: var(--fm-panel);
+        @include spacing(height, 56px);
+        @include spacing(padding-inline, 8px);
+        @include spacing(gap, 8px);
+    }
+
+    &__info {
+        flex: 1;
+        min-width: 0;
+
+        p {
+            margin: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    }
+
+    &__info-name {
+        @include t3;
+    }
+
+    &__info-meta {
+        color: var(--fm-muted);
+        @include ui-xs-light;
+    }
+
+    // «Готово» — только при выборе файла для поля или редактора
+    &__done {
+        display: none;
+    }
+
+    &_select &__done {
+        display: inline-flex;
+    }
+
+    &__drop {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        border: 2px dashed var(--color-main-color1-main);
+        border-radius: inherit;
+        background: color-mix(in srgb, var(--fm-bg) 90%, transparent);
+        color: var(--fm-accent);
+        pointer-events: none;
+        @include spacing(gap, 12px);
+        @include ui-m;
+
+        &[hidden] {
+            display: none;
+        }
+
+        p {
+            margin: 0;
+        }
+    }
+
+    &__drop-icon {
+        @include spacing(width, 48px);
+        @include spacing(height, 48px);
+    }
+
+    &__input {
+        display: none;
+    }
+}
+
+/* Кнопка действия: 40 × 40, иконка 24, подсказка снизу */
+.file-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-ui-small);
+    background: var(--fm-bg);
+    color: var(--fm-icon);
+    cursor: pointer;
+    @include spacing(width, 40px);
+    @include spacing(height, 40px);
+    @include transition(background-color);
+
+    &:hover {
+        background: var(--fm-active);
+    }
+
+    &:active {
+        background: var(--fm-selected);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--color-main-color1-main);
+        outline-offset: 2px;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
+
+    &[data-fm-action='delete-folder'] {
+        color: var(--color-states-error-medium);
+    }
+}
+
+.file-window__home {
+    background: var(--fm-panel);
+}
+
+/* Дерево папок: строка 24, отступ вложенности 16 */
+.file-tree,
+.file-tree__group {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.file-tree-row {
+    --depth: 0;
+
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    @include spacing(height, 24px);
+    @include spacing(gap, 4px);
+    padding-left: calc(#{vw(8px)} + var(--depth) * #{vw(16px)});
+    @include spacing(padding-right, 8px);
+    @include ui-s;
+    font-weight: 400;
+
+    &:hover {
+        background: var(--fm-hover);
+    }
+
+    &:active {
+        background: var(--fm-active);
+    }
+
+    &_active {
+        background: var(--fm-active);
+        color: var(--fm-accent);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--color-main-color1-main);
+        outline-offset: -2px;
+    }
+
+    &__arrow {
+        display: inline-flex;
+        flex-shrink: 0;
+        @include spacing(width, 16px);
+        @include spacing(height, 16px);
+
+        .fm-icon {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+            @include transition(transform);
+        }
+    }
+
+    &_open &__arrow .fm-icon {
+        transform: none;
+    }
+
+    &__icon {
+        @include spacing(width, 16px);
+        @include spacing(height, 16px);
+    }
+
+    &__name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* Карточка файла: превью 144 в рамке 160, вес в углу, название под превью */
+.file-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--fm-text);
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-ui-medium);
+    @include spacing(gap, 8px);
+    @include spacing(padding, 8px);
+    @include transition(background-color);
+
+    &:hover {
+        background: var(--fm-hover);
+    }
+
+    &:active {
+        box-shadow: inset 0 0 0 2px var(--color-main-color1-main);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--color-main-color1-main);
+        outline-offset: 2px;
+    }
+
+    &_active,
+    &_selected,
+    &_active:hover,
+    &_selected:hover {
+        background: var(--fm-selected);
+    }
+
+    &__preview {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        aspect-ratio: 1;
+        background: var(--fm-card);
+        border-radius: var(--radius-ui-small);
+        color: var(--fm-icon);
+    }
+
+    &__icon {
+        @include spacing(width, 48px);
+        @include spacing(height, 48px);
+    }
+
+    &__image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    &__size {
+        position: absolute;
+        @include spacing(top, 8px);
+        @include spacing(right, 8px);
+        background: var(--fm-bg);
+        color: var(--fm-text);
+        border-radius: var(--radius-ui-xsmall);
+        @include spacing(padding, 2px, 2px, 2px, 2px);
+        @include spacing(padding-inline, 8px);
+        @include ui-xs-light;
+    }
+
+    &__check {
+        position: absolute;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-main-color1-main);
+        color: var(--color-text-icon-gray-white);
+        border-radius: var(--radius-ui-xsmall);
+        @include spacing(top, 8px);
+        @include spacing(left, 8px);
+        @include spacing(width, 20px);
+        @include spacing(height, 20px);
+
+        .fm-icon {
+            @include spacing(width, 16px);
+            @include spacing(height, 16px);
+        }
+    }
+
+    &__name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        @include t3;
+    }
+
+    &_selected &__check {
+        display: flex;
+    }
+
+    &_active &__name,
+    &_selected &__name {
+        color: var(--fm-accent);
+    }
+
+    // дата и вес — в строке списка на планшете и телефоне
+    &__date,
+    &__weight {
+        display: none;
+    }
+
+    &_style_new &__name {
+        color: var(--color-states-success-dark);
+    }
+
+    &_style_uploading {
+        cursor: progress;
+
+        .file-card__preview {
+            opacity: 0.6;
+        }
+
+        .file-card__name {
+            color: var(--fm-muted);
+        }
+    }
+
+    &_style_error {
+        cursor: default;
+
+        .file-card__preview {
+            color: var(--color-states-error-medium);
+        }
+
+        .file-card__name {
+            color: var(--color-states-error-dark);
+        }
+    }
+
+    &__loader {
+        border: 3px solid var(--fm-selected);
+        border-top-color: var(--color-main-color1-main);
+        border-radius: 50%;
+        animation: file-card-spin 0.8s linear infinite;
+        @include spacing(width, 32px);
+        @include spacing(height, 32px);
+    }
+}
+
+@keyframes file-card-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Нижняя панель: только планшет и телефон */
+.file-tabbar {
+    display: none;
+}
+
+/* Меню файла и папки: у курсора, поверх окна */
+.file-menu {
+    position: fixed;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    background: var(--fm-bg);
+    color: var(--fm-text);
+    border-radius: var(--radius-ui-xlarge);
+    box-shadow: var(--shadow-gray-l);
+    @include spacing(min-width, 240px);
+    @include spacing(padding, 8px);
+
+    &[hidden] {
+        display: none;
+    }
+
+    &__item {
+        display: flex;
+        align-items: center;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        border-radius: var(--radius-ui-small);
+        @include spacing(gap, 12px);
+        @include spacing(padding, 10px, 10px, 10px, 10px);
+        @include spacing(padding-inline, 12px);
+        @include ui-s;
+
+        &:hover,
+        &:focus-visible {
+            background: var(--fm-active);
+            outline: none;
+        }
+
+        .fm-icon {
+            color: var(--fm-icon);
+        }
+
+        &_danger,
+        &_danger .fm-icon {
+            color: var(--color-states-error-medium);
+        }
+    }
+
+    &__line {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        border-top: 1px solid var(--fm-line);
+        @include spacing(margin-block, 4px);
+    }
+}
+
+@include Tablet {
+    .file-window.modal {
+        padding: 0;
+
+        .modal__dialog {
+            max-width: none;
+            height: 100%;
+            border-radius: 0;
+
+            &::after {
+                content: none;
+            }
+        }
+
+        .modal__content {
+            padding: 0;
+        }
+    }
+
+    .file-window {
+        &__side {
+            display: none;
+        }
+
+        &__toolbar {
+            @include spacing(padding-inline, 12px);
+        }
+
+        &__files {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+        }
+
+        &__bottom {
+            display: none;
+        }
+    }
+
+    // строка списка: превью 40, название, дата, вес справа
+    .file-card {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas: 'preview name name' 'preview date weight';
+        align-items: center;
+        border-radius: 0;
+        border-bottom: 1px solid var(--fm-line);
+        column-gap: vwt(12px);
+        row-gap: vwt(4px);
+        padding: vwt(8px) vwt(12px);
+
+        @include Mobile {
+            column-gap: vwm(12px);
+            row-gap: vwm(4px);
+            padding: vwm(8px) vwm(12px);
+        }
+
+        &__preview {
+            grid-area: preview;
+            width: vwt(40px);
+            height: vwt(40px);
+
+            @include Mobile {
+                width: vwm(40px);
+                height: vwm(40px);
+            }
+        }
+
+        &__icon {
+            width: 60%;
+            height: 60%;
+        }
+
+        &__size,
+        &__check {
+            display: none;
+        }
+
+        &__name {
+            grid-area: name;
+        }
+
+        &__date,
+        &__weight {
+            display: block;
+            color: var(--fm-muted);
+            @include ui-xs-light;
+        }
+
+        &__date {
+            grid-area: date;
+        }
+
+        &__weight {
+            grid-area: weight;
+            text-align: right;
+        }
+    }
+
+    .file-tabbar {
+        display: flex;
+        flex-shrink: 0;
+        justify-content: space-around;
+        border-top: 1px solid var(--fm-line);
+        background: var(--fm-bg);
+        padding: vwt(4px) vwt(8px);
+
+        @include Mobile {
+            padding: vwm(4px) vwm(8px);
+        }
+
+        &__item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border: 0;
+            background: none;
+            color: var(--fm-muted);
+            cursor: pointer;
+            border-radius: var(--radius-ui-small);
+            gap: vwt(2px);
+            padding: vwt(4px) vwt(8px);
+            @include ui-xs;
+
+            @include Mobile {
+                gap: vwm(2px);
+                padding: vwm(4px) vwm(8px);
+            }
+
+            .fm-icon {
+                color: var(--fm-icon);
+            }
+
+            &:active {
+                background: var(--fm-active);
+            }
+
+            &:disabled {
+                opacity: 0.4;
+            }
+        }
+    }
+
+    // «Готово» в нижней панели — только при выборе
+    .file-window:not(.file-window_select) .file-tabbar__item[data-fm-action='done'] {
+        display: none;
+    }
+}
