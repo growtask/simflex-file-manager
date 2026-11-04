@@ -1,5 +1,5 @@
 {
-  "name": "growtask/simflex-file-manager",
+  "name": "simflex/file-manager",
   "description": "Standalone PHP file manager",
   "minimum-stability": "stable",
   "license": "proprietary",
