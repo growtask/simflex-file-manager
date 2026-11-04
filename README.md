@@ -1,7 +1,7 @@
 # Simflex File Manager
 
 Файловый менеджер админки Simflex CMS 4.0: окно выбора и управления файлами каталога загрузок (`public/uf`).
-Пакет подключает ядро `growtask/simflex-core` (окно — в `Admin/theme/tpl/body.tpl`, API — `/admin/fm`).
+Пакет подключает ядро `simflex/core` (окно — в `Admin/theme/tpl/body.tpl`, API — `/admin/fm`).
 
 ## Возможности
 
