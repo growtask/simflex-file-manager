@@ -104,7 +104,8 @@ class Manager
 
         $out = [];
         foreach (new \DirectoryIterator($path) as $dir) {
-            if (!$dir->isDir() || in_array($dir->getFilename(), ['..', '.'])) {
+            // скрытые (.git, .gitkeep) не показываются: менеджер не даёт создавать имена с точки
+            if (!$dir->isDir() || str_starts_with($dir->getFilename(), '.')) {
                 continue;
             }
 
@@ -133,9 +134,12 @@ class Manager
 
         $out = [];
         foreach (new \DirectoryIterator($path) as $dir) {
+            if (str_starts_with($dir->getFilename(), '.')) {
+                continue;
+            }
             $filePath = str_replace($this->rootDir, '', $dir->getPath() . '/' . $dir->getFilename());
             if ($dir->isDir()) {
-                if (!$includeDirs || in_array($dir->getFilename(), ['..', '.'])) {
+                if (!$includeDirs) {
                     continue;
                 }
 
@@ -158,7 +162,8 @@ class Manager
                     'name' => $dir->getFilename(),
                     'path' => $filePath,
                     'count' => $elCnt,
-                    'edited' => $lastDate ? date('d.m.Y H:i', $lastDate) : ''
+                    'edited' => $lastDate ? date('d.m.Y H:i', $lastDate) : '',
+                    'mtime' => $lastDate,
                 ];
             } else {
                 $out[] = [
@@ -190,8 +195,11 @@ class Manager
         $isPic = false;
         switch (strtolower($ext)) {
             case 'jpg':
+            case 'jpeg':
             case 'png':
+            case 'gif':
             case 'webp':
+            case 'avif':
             case 'svg':
                 $isPic = true;
                 break;
@@ -200,8 +208,8 @@ class Manager
         // fetch image dimensions
         $imgDimensions = '';
         if ($isPic && strtolower($ext) != 'svg') {
-            $dimRaw = getimagesize($it->getRealPath());
-            $imgDimensions = $dimRaw[0] . 'x' . $dimRaw[1] . 'px';
+            $dimRaw = @getimagesize($it->getRealPath());
+            $imgDimensions = $dimRaw ? $dimRaw[0] . 'x' . $dimRaw[1] . 'px' : '';
         }
 
         // fetch last edit date
@@ -209,6 +217,8 @@ class Manager
 
         // fetch file size
         $size = filesize($it->getRealPath());
+        // размер в байтах и время изменения — для сортировки
+        $bytes = $size;
         $sizeExt = 'б';
 
         // convert to KiB
@@ -234,7 +244,9 @@ class Manager
             'size' => (int)$size,
             'size_ext' => $sizeExt,
             'dimensions' => $imgDimensions,
-            'edited' => $changeDate
+            'edited' => $changeDate,
+            'bytes' => $bytes,
+            'mtime' => $it->getMTime(),
         ];
     }
 
