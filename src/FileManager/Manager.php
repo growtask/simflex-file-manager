@@ -3,6 +3,8 @@
 namespace Simflex\FileManager;
 
 use JetBrains\PhpStorm\NoReturn;
+use Simflex\Core\Http\Api\ApiException;
+use Simflex\Core\Http\Api\JsonEnvelopeResponse;
 
 class Manager
 {
@@ -46,39 +48,36 @@ class Manager
         $this->testAuthFn = $authFn;
     }
 
+    /**
+     * Выполняет метод API и отправляет ответ: JSON-конверт (JsonEnvelopeResponse) или, для download, файл.
+     * Ошибка - HTTP-статус 4xx/5xx и error.message
+     */
     #[NoReturn]
     public function handleRequest(): void
     {
-        // make sure user is authenticated
-        if (!$this->testAuth()) {
-            $this->sendResponseAndQuit([
-                'success' => false,
-                'error' => 'not_authenticated'
-            ]);
+        $response = new JsonEnvelopeResponse();
+        try {
+            if (!$this->testAuth()) {
+                throw ApiException::unauthorized('Нет доступа к файлам');
+            }
+
+            // вызываются только методы API, а не любые методы класса
+            $method = (string)($_REQUEST['method'] ?? '');
+            if (!in_array($method, self::API_METHODS, true)) {
+                throw ApiException::notFound('Неизвестное действие');
+            }
+
+            // изменяющий запрос принимается только со страниц этого же сайта (защита от CSRF)
+            if (in_array($method, self::MODIFYING_METHODS, true) && !$this->isSameOriginRequest()) {
+                throw ApiException::forbidden('Действие запрещено');
+            }
+
+            $response->setData($this->{$method}());
+        } catch (\Throwable $ex) {
+            $response->setError($ex);
         }
 
-        // вызываются только методы API, а не любые методы класса
-        $method = (string)($_REQUEST['method'] ?? '');
-        if (!in_array($method, self::API_METHODS, true)) {
-            $this->sendResponseAndQuit([
-                'success' => false,
-                'error' => 'method_not_found'
-            ]);
-        }
-
-        // изменяющий запрос принимается только со страниц этого же сайта (защита от CSRF)
-        if (in_array($method, self::MODIFYING_METHODS, true) && !$this->isSameOriginRequest()) {
-            $this->sendResponseAndQuit([
-                'success' => false,
-                'error' => 'forbidden'
-            ]);
-        }
-
-        // execute and send output
-        $this->sendResponseAndQuit([
-            'success' => true,
-            'data' => $this->{$method}(),
-        ]);
+        $response->send();
     }
 
     /**
@@ -128,6 +127,10 @@ class Manager
     {
         if (!($path = $this->getPathSafe())) {
             return [];
+        }
+
+        if (!is_dir($path)) {
+            throw ApiException::notFound('Файл или папка не найдены');
         }
 
         $includeDirs = $_REQUEST['include_dirs'] ?? 0;
@@ -282,79 +285,91 @@ class Manager
 
     /**
      * Deletes the file by path
-     * @return string[]
+     * @return array{}
      */
     protected function delete(): array
     {
         if (!($path = $this->getPathSafe())) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
         if (!is_file($path) && !is_dir($path)) {
-            return ['error' => 'does_not_exist'];
+            throw ApiException::notFound('Файл или папка не найдены');
         }
 
         // корень каталога загрузок не удаляется
         if (rtrim($path, '/') === rtrim($this->rootDir, '/')) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
-        return ['error' => $this->rm($path) ? '' : 'no_permissions'];
+        if (!$this->rm($path)) {
+            throw ApiException::forbidden('Нет прав на запись');
+        }
+
+        return [];
     }
 
     /**
      * Creates a directory in path
-     * @return string[]
+     * @return array{}
      */
     protected function createDir(): array
     {
         if (!($path = $this->getPathSafe())) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
         if (!is_file($path) && !is_dir($path)) {
-            return ['error' => 'does_not_exist'];
+            throw ApiException::notFound('Файл или папка не найдены');
         }
 
         $dirName = (string)($_REQUEST['name'] ?? '');
         if ($dirName === '' || str_starts_with($dirName, '.') || strpbrk($dirName, "/\\\0") !== false) {
-            return ['error' => 'invalid_name'];
+            throw ApiException::unprocessable('Недопустимое имя');
         }
 
-        return ['error' => mkdir($path . '/' . $dirName) ? '' : 'no_permissions'];
+        if (!mkdir($path . '/' . $dirName)) {
+            throw ApiException::forbidden('Нет прав на запись');
+        }
+
+        return [];
     }
 
     /**
      * Renames a directory or a file
-     * @return string[]
+     * @return array{}
      */
     protected function rename(): array
     {
         if (!($path = $this->getPathSafe())) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
         if (!is_file($path) && !is_dir($path)) {
-            return ['error' => 'does_not_exist'];
+            throw ApiException::notFound('Файл или папка не найдены');
         }
 
         $newName = (string)($_REQUEST['name'] ?? '');
         if ($newName === '' || str_contains($newName, '..') || strpbrk($newName, "/\\\0") !== false) {
-            return ['error' => 'invalid_name'];
+            throw ApiException::unprocessable('Недопустимое имя');
         }
         // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.); код ошибки - тот, что
         // фронтенд показывает как «Неверное имя»
         if (is_file($path) ? !static::isAllowedFileName($newName) : str_starts_with($newName, '.')) {
-            return ['error' => 'invalid_name'];
+            throw ApiException::unprocessable('Недопустимое имя');
         }
 
         // extract the directory of the path
         $parentPath = dirname($path);
         if (is_file($parentPath . '/' . $newName) || is_dir($parentPath . '/' . $newName)) {
-            return ['error' => 'already_exists'];
+            throw new ApiException('Файл или папка с таким именем уже есть', 409);
         }
 
-        return ['error' => rename($path, $parentPath . '/' . $newName) ? '' : 'no_permissions'];
+        if (!rename($path, $parentPath . '/' . $newName)) {
+            throw ApiException::forbidden('Нет прав на запись');
+        }
+
+        return [];
     }
 
     /**
@@ -402,11 +417,11 @@ class Manager
     protected function download()
     {
         if (!($path = $this->getPathSafe())) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
         if (!is_file($path) && !is_dir($path)) {
-            return ['error' => 'does_not_exist'];
+            throw ApiException::notFound('Файл или папка не найдены');
         }
 
         $name = explode('/', $path);
@@ -427,15 +442,15 @@ class Manager
     {
         // test post size
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $this->convertToBytes(ini_get('post_max_size'))) {
-            return ['error' => 'file_too_large'];
+            throw new ApiException('Файл слишком большой', 413);
         }
 
         if (!($path = $this->getPathSafe())) {
-            return ['error' => 'invalid_path'];
+            throw ApiException::badRequest('Неверный путь');
         }
 
         if (!isset($_FILES['file'])) {
-            return ['error' => 'nothing_uploaded'];
+            throw ApiException::badRequest('Файлы не выбраны');
         }
 
         $fileStatus = [];
@@ -519,18 +534,5 @@ class Manager
         }
 
         return strcasecmp($sourceHost . ($sourcePort ? ':' . $sourcePort : ''), $host) === 0;
-    }
-
-    /**
-     * Sends response back and stops execution
-     * @param array $data
-     * @return void
-     */
-    #[NoReturn]
-    protected function sendResponseAndQuit(array $data): void
-    {
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode($data, JSON_UNESCAPED_UNICODE);
-        exit;
     }
 }

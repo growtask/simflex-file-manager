@@ -14,18 +14,6 @@
 const MODAL_ID = 'sf-file-manager';
 const LONG_PRESS = 500;
 
-const ERRORS = {
-    not_authenticated: 'Нет доступа к файлам',
-    method_not_found: 'Неизвестное действие',
-    forbidden: 'Действие запрещено',
-    invalid_path: 'Неверный путь',
-    does_not_exist: 'Файл или папка не найдены',
-    no_permissions: 'Нет прав на запись',
-    invalid_name: 'Недопустимое имя',
-    already_exists: 'Файл или папка с таким именем уже есть',
-    file_too_large: 'Файл слишком большой',
-    nothing_uploaded: 'Файлы не выбраны',
-};
 const UPLOAD_ERRORS = {
     error: 'не загружен',
     forbidden: 'такой тип файла нельзя загрузить',
@@ -121,14 +109,17 @@ if (root && modal) {
             url += '&' + new URLSearchParams(params).toString();
         }
         const response = await fetch(url, options);
-        const json = await response.json();
-        if (!json.success) {
-            throw new Error(ERRORS[json.error] ?? json.error ?? 'Ошибка');
+        let json = null;
+        try {
+            json = await response.json();
+        } catch (e) {
+            // тело не JSON: ошибка сервера без конверта
         }
-        if (json.data?.error) {
-            throw new Error(ERRORS[json.data.error] ?? json.data.error);
+        if (!response.ok || !json || json.error?.code) {
+            throw new Error(json?.error?.message || 'Ошибка');
         }
-        return json.data;
+        // конверт: список — в items, пустой ответ — без ключей
+        return json.items ?? [];
     };
 
     const report = (error) => toast(error.message || 'Ошибка', 'error');
