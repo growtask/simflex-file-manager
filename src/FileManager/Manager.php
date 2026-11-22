@@ -26,6 +26,21 @@ class Manager
         'woff', 'woff2', 'ttf', 'otf', 'eot',
     ];
 
+    /** Картинки, которые при загрузке сжимаются в WebP (как в редакторе texted): JPEG, PNG, WebP */
+    public const COMPRESSED_IMAGES = ['jpg', 'jpeg', 'png', 'webp'];
+
+    /** Картинки, которые сохраняются как есть: проверяются на посторонний код (файл — и картинка, и страница) */
+    public const RAW_IMAGES = ['gif', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic'];
+
+    /** Большая сторона картинки после сжатия, px */
+    public const IMAGE_MAX_SIDE = 2560;
+
+    /** Качество WebP (0–100) */
+    public const IMAGE_QUALITY = 82;
+
+    /** Больше стольких пикселей картинка не открывается (защита памяти сервера) */
+    public const IMAGE_MAX_PIXELS = 24_000_000;
+
     /**
      * Части имени, которые веб-сервер может принять за исполняемое расширение и в середине имени
      * (file.php.jpg при AddHandler)
@@ -38,14 +53,35 @@ class Manager
     /** Методы API, которые меняют файлы */
     protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'upload'];
 
-    /** @var callable */
-    protected $testAuthFn;
-    protected string $rootDir;
+    /** Кириллица → латиница для имён загруженных файлов (как в редакторе texted) */
+    protected const TRANSLIT = [
+        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'yo', 'ж' => 'zh', 'з' => 'z',
+        'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n', 'о' => 'o', 'п' => 'p', 'р' => 'r',
+        'с' => 's', 'т' => 't', 'у' => 'u', 'ф' => 'f', 'х' => 'kh', 'ц' => 'ts', 'ч' => 'ch', 'ш' => 'sh',
+        'щ' => 'shch', 'ъ' => '', 'ы' => 'y', 'ь' => '', 'э' => 'e', 'ю' => 'yu', 'я' => 'ya', 'і' => 'i', 'ї' => 'yi',
+        'є' => 'ye', 'ґ' => 'g', 'ў' => 'u',
+    ];
 
-    public function __construct(string $root, $authFn)
+    /** @var callable|null */
+    protected $testAuthFn;
+    /** @var callable|null */
+    protected $csrfFn;
+    /** Корень файлов: путь как задан, без / в конце */
+    protected string $rootDir;
+    /** Корень файлов после realpath(); пусто — корня нет */
+    protected string $realRoot;
+
+    /**
+     * @param string $root Каталог файлов (public/uf)
+     * @param callable|null $authFn Доступ к файлам: fn(): bool
+     * @param callable|null $csrfFn Проверка CSRF-токена изменяющего запроса: fn(): bool (ядро - Csrf::isValid())
+     */
+    public function __construct(string $root, $authFn, $csrfFn = null)
     {
-        $this->rootDir = $root;
+        $this->rootDir = rtrim($root, '/\\');
+        $this->realRoot = (string)realpath($this->rootDir);
         $this->testAuthFn = $authFn;
+        $this->csrfFn = $csrfFn;
     }
 
     /**
@@ -56,6 +92,7 @@ class Manager
     public function handleRequest(): void
     {
         $response = new JsonEnvelopeResponse();
+        header('Cache-Control: no-store');
         try {
             if (!$this->testAuth()) {
                 throw ApiException::unauthorized('Нет доступа к файлам');
@@ -67,9 +104,8 @@ class Manager
                 throw ApiException::notFound('Неизвестное действие');
             }
 
-            // изменяющий запрос принимается только со страниц этого же сайта (защита от CSRF)
-            if (in_array($method, self::MODIFYING_METHODS, true) && !$this->isSameOriginRequest()) {
-                throw ApiException::forbidden('Действие запрещено');
+            if (in_array($method, self::MODIFYING_METHODS, true)) {
+                $this->checkModifyingRequest();
             }
 
             $response->setData($this->{$method}());
@@ -81,42 +117,133 @@ class Manager
     }
 
     /**
-     * Returns empty string if requested path tries to go up in tree
-     * @return string
+     * Изменяющий запрос: только POST (картинка или ссылка на странице шлёт GET), со страницы этого же сайта
+     * и с CSRF-токеном сессии (если задана проверка)
+     *
+     * @throws ApiException 405 - не POST, 403 - чужой сайт или нет токена
      */
-    protected function getPathSafe(): string
+    protected function checkModifyingRequest(): void
     {
-        $path = $this->rootDir . ($_REQUEST['path'] ?? '');
-        return str_contains($path, '..') ? '' : $path;
+        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
+            throw new ApiException('Действие выполняется только запросом POST', 405);
+        }
+        if (!$this->isSameOriginRequest()) {
+            throw ApiException::forbidden('Действие запрещено');
+        }
+        $fn = $this->csrfFn;
+        if ($fn && !$fn()) {
+            throw ApiException::forbidden('Запрос отклонён: обновите страницу и повторите действие');
+        }
     }
 
     /**
-     * Returns a tree of directories by the path
+     * Путь на диске по параметру path (от корня файлов: '', '/', '/images/a.png'). Сегменты - без '.', '..',
+     * обратной косой черты и нулевого байта; путь не проходит через символические ссылки и не выходит из корня
+     *
+     * @param bool $allowRoot Можно ли сам корень (удалить и переименовать корень нельзя)
+     * @param bool $mustExist Путь должен существовать
+     * @throws ApiException 400 - неверный путь, 404 - не найден
+     */
+    protected function resolvePath(bool $allowRoot = true, bool $mustExist = true): string
+    {
+        if ($this->realRoot === '' || !is_dir($this->realRoot)) {
+            throw new ApiException('Каталог файлов не найден', 500);
+        }
+
+        $relative = (string)($_REQUEST['path'] ?? '');
+        if ($relative !== '' && $relative[0] !== '/') {
+            throw ApiException::badRequest('Неверный путь');
+        }
+        $segments = array_values(array_filter(explode('/', $relative), fn(string $part) => $part !== ''));
+        foreach ($segments as $segment) {
+            if ($segment === '.' || $segment === '..' || strpbrk($segment, "\\\0") !== false) {
+                throw ApiException::badRequest('Неверный путь');
+            }
+        }
+        if (!$segments && !$allowRoot) {
+            throw ApiException::badRequest('Неверный путь');
+        }
+
+        $path = $this->realRoot;
+        foreach ($segments as $segment) {
+            $path .= '/' . $segment;
+            if (is_link($path)) {
+                throw ApiException::badRequest('Неверный путь');
+            }
+        }
+
+        if (!file_exists($path)) {
+            if ($mustExist) {
+                throw ApiException::notFound('Файл или папка не найдены');
+            }
+            return $path;
+        }
+
+        // на случай подмены каталога между проверками: итог внутри корня
+        $real = realpath($path);
+        if ($real === false || ($real !== $this->realRoot && !str_starts_with($real, $this->realRoot . '/'))) {
+            throw ApiException::badRequest('Неверный путь');
+        }
+
+        return $path;
+    }
+
+    /** Путь от корня файлов для ответа: /images/a.png */
+    protected function relative(string $path): string
+    {
+        return substr($path, strlen($this->realRoot));
+    }
+
+    /**
+     * Дерево папок от path. depth (параметр запроса) - сколько уровней вернуть: 1 - только вложенные папки
+     * (окно подгружает дерево по уровням), 0 или нет - всё дерево. Узел: name, path, has_children, data
+     * (вложенные узлы или null, если уровень не загружен)
      * @param string $parent Parent directory
+     * @param int|null $depth Уровней ниже $parent; null - из запроса
      * @return array
      */
-    protected function getTree(string $parent = ''): array
+    protected function getTree(string $parent = '', ?int $depth = null): array
     {
-        if (!($path = $parent ?: $this->getPathSafe())) {
-            return [];
+        $path = $parent ?: $this->resolvePath();
+        if (!is_dir($path)) {
+            throw ApiException::notFound('Файл или папка не найдены');
         }
+        $depth ??= max(0, (int)($_REQUEST['depth'] ?? 0));
 
         $out = [];
-        foreach (new \DirectoryIterator($path) as $dir) {
-            // скрытые (.git, .gitkeep) не показываются: менеджер не даёт создавать имена с точки
-            if (!$dir->isDir() || str_starts_with($dir->getFilename(), '.')) {
-                continue;
-            }
-
-            $dirPath = $dir->getPath() . '/' . $dir->getFilename();
+        foreach ($this->subdirectories($path) as $name) {
+            $dirPath = $path . '/' . $name;
             $out[] = [
-                'name' => $dir->getFilename(),
-                'path' => str_replace($this->rootDir, '', $dirPath),
-                'data' => $this->getTree($dirPath)
+                'name' => $name,
+                'path' => $this->relative($dirPath),
+                'has_children' => (bool)$this->subdirectories($dirPath, 1),
+                'data' => $depth === 1 ? null : $this->getTree($dirPath, $depth ? $depth - 1 : 0),
             ];
         }
+        usort($out, fn(array $a, array $b) => strnatcasecmp($a['name'], $b['name']));
 
         return $out;
+    }
+
+    /**
+     * Имена видимых вложенных папок: скрытые (.git, с точки — менеджер такие не создаёт) и ссылки не показываются
+     * @param int $limit Сколько найти (0 - все): для has_children хватает одной
+     * @return string[]
+     */
+    protected function subdirectories(string $path, int $limit = 0): array
+    {
+        $names = [];
+        foreach (new \DirectoryIterator($path) as $dir) {
+            if ($dir->isDot() || !$dir->isDir() || $dir->isLink() || str_starts_with($dir->getFilename(), '.')) {
+                continue;
+            }
+            $names[] = $dir->getFilename();
+            if ($limit && count($names) >= $limit) {
+                break;
+            }
+        }
+
+        return $names;
     }
 
     /**
@@ -125,10 +252,7 @@ class Manager
      */
     protected function getFileList(): array
     {
-        if (!($path = $this->getPathSafe())) {
-            return [];
-        }
-
+        $path = $this->resolvePath();
         if (!is_dir($path)) {
             throw ApiException::notFound('Файл или папка не найдены');
         }
@@ -137,10 +261,11 @@ class Manager
 
         $out = [];
         foreach (new \DirectoryIterator($path) as $dir) {
-            if (str_starts_with($dir->getFilename(), '.')) {
+            if (str_starts_with($dir->getFilename(), '.') || $dir->isLink()) {
                 continue;
             }
-            $filePath = str_replace($this->rootDir, '', $dir->getPath() . '/' . $dir->getFilename());
+            $itemPath = $path . '/' . $dir->getFilename();
+            $filePath = $this->relative($itemPath);
             if ($dir->isDir()) {
                 if (!$includeDirs) {
                     continue;
@@ -149,8 +274,8 @@ class Manager
                 // loop through insides and find out element count and last change date
                 $elCnt = 0;
                 $lastDate = 0;
-                foreach (new \DirectoryIterator($dir->getPath() . '/' . $dir->getFilename()) as $d2) {
-                    if (in_array($d2->getFilename(), ['..', '.'])) {
+                foreach (new \DirectoryIterator($itemPath) as $d2) {
+                    if ($d2->isDot() || str_starts_with($d2->getFilename(), '.')) {
                         continue;
                     }
 
@@ -187,100 +312,66 @@ class Manager
      */
     protected function getFileInfo(\DirectoryIterator $it): array
     {
-        $ext = explode('.', $it->getFilename());
-        if (count($ext) > 1) {
-            $ext = $ext[count($ext) - 1];
-        } else {
-            $ext = $ext[0];
-        }
+        $ext = strtolower($it->getExtension());
 
         // test if this file is an image
-        $isPic = false;
-        switch (strtolower($ext)) {
-            case 'jpg':
-            case 'jpeg':
-            case 'png':
-            case 'gif':
-            case 'webp':
-            case 'avif':
-            case 'svg':
-                $isPic = true;
-                break;
-        }
+        $isPic = in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'], true);
 
         // fetch image dimensions
         $imgDimensions = '';
-        if ($isPic && strtolower($ext) != 'svg') {
-            $dimRaw = @getimagesize($it->getRealPath());
+        if ($isPic && $ext !== 'svg') {
+            $dimRaw = @getimagesize($it->getPathname());
             $imgDimensions = $dimRaw ? $dimRaw[0] . 'x' . $dimRaw[1] . 'px' : '';
         }
 
-        // fetch last edit date
-        $changeDate = date('d.m.Y H:i', $it->getMTime());
-
-        // fetch file size
-        $size = filesize($it->getRealPath());
-        // размер в байтах и время изменения — для сортировки
-        $bytes = $size;
-        $sizeExt = 'б';
-
-        // convert to KiB
-        if ($size > 1024) {
-            $size /= 1024;
-            $sizeExt = 'кб';
-        }
-
-        // convert to MiB
-        if ($size > 1024) {
-            $size /= 1024;
-            $sizeExt = 'мб';
-        }
-
-        // convert to GiB
-        if ($size > 1024) {
-            $size /= 1024;
-            $sizeExt = 'гб';
-        }
+        $bytes = (int)$it->getSize();
+        [$size, $sizeExt] = static::formatSize($bytes);
 
         return [
             'is_pic' => $isPic,
-            'size' => (int)$size,
+            'size' => $size,
             'size_ext' => $sizeExt,
             'dimensions' => $imgDimensions,
-            'edited' => $changeDate,
+            'edited' => date('d.m.Y H:i', $it->getMTime()),
+            // размер в байтах и время изменения — для сортировки
             'bytes' => $bytes,
             'mtime' => $it->getMTime(),
         ];
     }
 
-    protected function rm(string $path)
+    /**
+     * Размер для показа: [число, единица]; до 10 — с одним знаком после запятой (1.5 мб)
+     * @return array{0: int|float, 1: string}
+     */
+    public static function formatSize(int $bytes): array
     {
-        // Очищаем пути от лишних слэшей для точного сравнения
-        $realPath = realpath($path);
-        $realRoot = realpath($this->rootDir);
+        $units = ['б', 'кб', 'мб', 'гб'];
+        $size = (float)$bytes;
+        $unit = 0;
+        while ($size >= 1024 && $unit < count($units) - 1) {
+            $size /= 1024;
+            ++$unit;
+        }
+        $size = $unit === 0 || $size >= 10 ? (int)round($size) : round($size, 1);
+        return [$size, $units[$unit]];
+    }
 
-        // Защита: если путь не существует или он находится ВНЕ корневой папки
-        if (!$realPath || !$realRoot || strpos($realPath, $realRoot) !== 0) {
-            return false;
+    /**
+     * Удаляет файл или папку со всем содержимым. Символическая ссылка удаляется сама, без того, на что указывает
+     */
+    protected function rm(string $path): bool
+    {
+        if (is_link($path) || !is_dir($path)) {
+            return unlink($path);
         }
 
-        if ($realPath === $realRoot) {
-            return false;
-        }
-
-        if (is_dir($path)) {
-            foreach (scandir($path) as $f) {
-                if ($f != '.' && $f != '..') {
-                    if (!$this->rm($path . '/' . $f)) {
-                        return false;
-                    }
-                }
+        foreach (scandir($path) ?: [] as $f) {
+            if ($f !== '.' && $f !== '..' && !$this->rm($path . '/' . $f)) {
+                return false;
             }
-
-            return rmdir($path);
         }
 
-        return unlink($path);
+        return rmdir($path);
     }
 
     /**
@@ -289,21 +380,11 @@ class Manager
      */
     protected function delete(): array
     {
-        if (!($path = $this->getPathSafe())) {
-            throw ApiException::badRequest('Неверный путь');
-        }
-
-        if (!is_file($path) && !is_dir($path)) {
-            throw ApiException::notFound('Файл или папка не найдены');
-        }
-
         // корень каталога загрузок не удаляется
-        if (rtrim($path, '/') === rtrim($this->rootDir, '/')) {
-            throw ApiException::badRequest('Неверный путь');
-        }
+        $path = $this->resolvePath(allowRoot: false);
 
         if (!$this->rm($path)) {
-            throw ApiException::forbidden('Нет прав на запись');
+            throw ApiException::forbidden('Не удалось удалить: нет прав на запись');
         }
 
         return [];
@@ -315,20 +396,21 @@ class Manager
      */
     protected function createDir(): array
     {
-        if (!($path = $this->getPathSafe())) {
+        $path = $this->resolvePath();
+        if (!is_dir($path)) {
             throw ApiException::badRequest('Неверный путь');
         }
 
-        if (!is_file($path) && !is_dir($path)) {
-            throw ApiException::notFound('Файл или папка не найдены');
-        }
-
         $dirName = (string)($_REQUEST['name'] ?? '');
-        if ($dirName === '' || str_starts_with($dirName, '.') || strpbrk($dirName, "/\\\0") !== false) {
+        if (!static::isAllowedDirName($dirName)) {
             throw ApiException::unprocessable('Недопустимое имя');
         }
 
-        if (!mkdir($path . '/' . $dirName)) {
+        if (file_exists($path . '/' . $dirName)) {
+            throw new ApiException('Файл или папка с таким именем уже есть', 409);
+        }
+
+        if (!@mkdir($path . '/' . $dirName)) {
             throw ApiException::forbidden('Нет прав на запись');
         }
 
@@ -341,31 +423,21 @@ class Manager
      */
     protected function rename(): array
     {
-        if (!($path = $this->getPathSafe())) {
-            throw ApiException::badRequest('Неверный путь');
-        }
-
-        if (!is_file($path) && !is_dir($path)) {
-            throw ApiException::notFound('Файл или папка не найдены');
-        }
+        // корень каталога загрузок не переименовывается
+        $path = $this->resolvePath(allowRoot: false);
 
         $newName = (string)($_REQUEST['name'] ?? '');
-        if ($newName === '' || str_contains($newName, '..') || strpbrk($newName, "/\\\0") !== false) {
-            throw ApiException::unprocessable('Недопустимое имя');
-        }
-        // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.); код ошибки - тот, что
-        // фронтенд показывает как «Неверное имя»
-        if (is_file($path) ? !static::isAllowedFileName($newName) : str_starts_with($newName, '.')) {
+        // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.)
+        if (is_file($path) ? !static::isAllowedFileName($newName) : !static::isAllowedDirName($newName)) {
             throw ApiException::unprocessable('Недопустимое имя');
         }
 
-        // extract the directory of the path
-        $parentPath = dirname($path);
-        if (is_file($parentPath . '/' . $newName) || is_dir($parentPath . '/' . $newName)) {
+        $target = dirname($path) . '/' . $newName;
+        if (file_exists($target)) {
             throw new ApiException('Файл или папка с таким именем уже есть', 409);
         }
 
-        if (!rename($path, $parentPath . '/' . $newName)) {
+        if (!@rename($path, $target)) {
             throw ApiException::forbidden('Нет прав на запись');
         }
 
@@ -379,10 +451,11 @@ class Manager
     protected function fixFilesArray(): array
     {
         $out = [];
+        $names = (array)($_FILES['file']['name'] ?? []);
 
-        for ($i = 0; $i < count($_FILES['file']['name']); ++$i) {
+        for ($i = 0; $i < count($names); ++$i) {
             foreach (array_keys($_FILES['file']) as $k) {
-                $out[$i][$k] = $_FILES['file'][$k][$i];
+                $out[$i][$k] = ((array)$_FILES['file'][$k])[$i] ?? null;
             }
         }
 
@@ -413,39 +486,46 @@ class Manager
         };
     }
 
+    /**
+     * Отдаёт файл на скачивание потоком (без чтения в память)
+     */
     #[NoReturn]
     protected function download()
     {
-        if (!($path = $this->getPathSafe())) {
-            throw ApiException::badRequest('Неверный путь');
+        $path = $this->resolvePath(allowRoot: false);
+        if (!is_file($path)) {
+            throw ApiException::notFound('Файл не найден');
         }
 
-        if (!is_file($path) && !is_dir($path)) {
-            throw ApiException::notFound('Файл или папка не найдены');
+        $name = basename($path);
+        // имя по RFC 6266: латинский запасной вариант и UTF-8 (кириллица, пробелы)
+        $fallback = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name) ?: 'file';
+        while (ob_get_level() > 0) {
+            ob_end_clean();
         }
-
-        $name = explode('/', $path);
-        $name = $name[count($name) - 1];
-
-        $data = file_get_contents($path);
         header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename=' . $name);
-        echo $data;
+        header('Content-Length: ' . filesize($path));
+        header('Content-Disposition: attachment; filename="' . $fallback . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+        header('X-Content-Type-Options: nosniff');
+        readfile($path);
         exit;
     }
 
     /**
-     * Handle uploaded files
+     * Handle uploaded files: имя - латиницей (как в редакторе texted), занятое не перезаписывается (photo-2.webp),
+     * JPEG, PNG и WebP сжимаются в WebP до IMAGE_MAX_SIDE. Статус каждого файла - путь сохранённого файла от корня
+     * или код ошибки: error, forbidden, error_save, too_large, bad_image
      * @return array|string[]
      */
     protected function upload(): array
     {
         // test post size
-        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $this->convertToBytes(ini_get('post_max_size'))) {
+        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $this->convertToBytes((string)ini_get('post_max_size'))) {
             throw new ApiException('Файл слишком большой', 413);
         }
 
-        if (!($path = $this->getPathSafe())) {
+        $path = $this->resolvePath();
+        if (!is_dir($path)) {
             throw ApiException::badRequest('Неверный путь');
         }
 
@@ -454,33 +534,236 @@ class Manager
         }
 
         $fileStatus = [];
-        $files = $this->fixFilesArray();
-        foreach ($files as $file) {
-            // error failed
-            if ($file['error']) {
-                $fileStatus[] = 'error';
-                continue;
-            }
-
-            // только безопасные типы файлов
-            if (!static::isAllowedFileName((string)$file['name'])) {
-                $fileStatus[] = 'forbidden';
-                continue;
-            }
-
-            $fileStatus[] = move_uploaded_file($file['tmp_name'], $path . '/' . $file['name']) ? str_replace($this->rootDir, '', $path . '/' . $file['name']) : 'error_save';
+        foreach ($this->fixFilesArray() as $file) {
+            $fileStatus[] = $this->storeUploaded($file, $path);
         }
 
         return $fileStatus;
     }
 
     /**
+     * Сохраняет один загруженный файл в каталог $dir
+     * @param array{name?: string, tmp_name?: string, error?: int} $file
+     * @return string Путь от корня или код ошибки
+     */
+    protected function storeUploaded(array $file, string $dir): string
+    {
+        $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
+            return 'too_large';
+        }
+        $tmp = (string)($file['tmp_name'] ?? '');
+        if ($error !== UPLOAD_ERR_OK || $tmp === '' || !is_uploaded_file($tmp)) {
+            return 'error';
+        }
+
+        // только безопасные типы файлов
+        $name = basename(str_replace('\\', '/', (string)($file['name'] ?? '')));
+        if (!static::isAllowedFileName($name)) {
+            return 'forbidden';
+        }
+
+        $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        $isCompressed = in_array($extension, static::COMPRESSED_IMAGES, true) && static::canWriteWebp();
+        if (in_array($extension, static::RAW_IMAGES, true) && static::hasCode($tmp)) {
+            return 'bad_image';
+        }
+
+        $target = null;
+        $staged = @tempnam($dir, '.fm-');
+        try {
+            if ($staged === false) {
+                return 'error_save';
+            }
+            if ($isCompressed) {
+                static::writeWebp($tmp, $staged);
+                $extension = 'webp';
+            } elseif (!move_uploaded_file($tmp, $staged)) {
+                return 'error_save';
+            }
+            @chmod($staged, 0644);
+
+            $target = static::reserve($dir, static::slugify($name), $extension);
+            if (DIRECTORY_SEPARATOR === '\\') {
+                @unlink($target);
+            }
+            if (!rename($staged, $target)) {
+                return 'error_save';
+            }
+            $saved = $target;
+            $target = null;
+            return $this->relative($saved);
+        } catch (\InvalidArgumentException) {
+            return 'bad_image';
+        } catch (\Throwable) {
+            return 'error_save';
+        } finally {
+            if ($staged !== false && is_file($staged)) {
+                @unlink($staged);
+            }
+            // занятое под имя, но не сохранённое
+            if ($target !== null && is_file($target) && filesize($target) === 0) {
+                @unlink($target);
+            }
+        }
+    }
+
+    /** GD умеет писать WebP: иначе картинки сохраняются как есть */
+    public static function canWriteWebp(): bool
+    {
+        return function_exists('imagewebp') && (imagetypes() & IMG_WEBP);
+    }
+
+    /**
+     * Сжимает JPEG, PNG или WebP в WebP (качество IMAGE_QUALITY), большая сторона - не больше IMAGE_MAX_SIDE;
+     * прозрачность сохраняется. Логика - как в редакторе texted (TedMediaStorage::writeWebp)
+     *
+     * @return array{width: int, height: int}
+     * @throws \InvalidArgumentException не картинка, повреждена или слишком большая
+     * @throws \RuntimeException не удалось записать
+     */
+    public static function writeWebp(string $source, string $destination): array
+    {
+        $size = @getimagesize($source);
+        if (!$size || $size[0] < 1 || $size[1] < 1 || $size[0] * $size[1] > static::IMAGE_MAX_PIXELS) {
+            throw new \InvalidArgumentException('Недопустимые размеры изображения');
+        }
+        // GD держит в памяти исходник и уменьшенную копию (4 байта на пиксель и запас)
+        $k = min(1, static::IMAGE_MAX_SIDE / max($size[0], $size[1]));
+        static::ensureMemory((int)(($size[0] * $size[1] + $size[0] * $size[1] * $k * $k) * 5) + 32 * 1048576);
+        $image = match ($size[2]) {
+            IMAGETYPE_JPEG => @imagecreatefromjpeg($source),
+            IMAGETYPE_PNG => @imagecreatefrompng($source),
+            IMAGETYPE_WEBP => @imagecreatefromwebp($source),
+            default => false,
+        };
+        if (!$image) {
+            throw new \InvalidArgumentException('Изображение повреждено');
+        }
+        if (!imageistruecolor($image)) {
+            imagepalettetotruecolor($image);
+        }
+        imagealphablending($image, false);
+        imagesavealpha($image, true);
+        $width = imagesx($image);
+        $height = imagesy($image);
+        if (max($width, $height) > static::IMAGE_MAX_SIDE) {
+            $k = static::IMAGE_MAX_SIDE / max($width, $height);
+            $scaled = imagescale($image, max(1, (int)round($width * $k)), max(1, (int)round($height * $k)));
+            if ($scaled) {
+                // исходник освобождается присваиванием (imagedestroy() с PHP 8 ничего не делает)
+                $image = $scaled;
+                imagealphablending($image, false);
+                imagesavealpha($image, true);
+                $width = imagesx($image);
+                $height = imagesy($image);
+            }
+        }
+        if (!@imagewebp($image, $destination, static::IMAGE_QUALITY) || !filesize($destination)) {
+            throw new \RuntimeException('Не удалось преобразовать изображение в WebP');
+        }
+
+        return ['width' => $width, 'height' => $height];
+    }
+
+    /**
+     * Поднимает memory_limit до $bytes сверх уже занятого, если он меньше (только поднимает; -1 - без ограничения)
+     */
+    protected static function ensureMemory(int $bytes): void
+    {
+        $limit = (string)ini_get('memory_limit');
+        if ($limit === '-1') {
+            return;
+        }
+        $need = memory_get_usage() + $bytes;
+        $current = (int)$limit * match (strtoupper(substr($limit, -1))) {
+            'G' => 1073741824,
+            'M' => 1048576,
+            'K' => 1024,
+            default => 1,
+        };
+        if ($current < $need) {
+            @ini_set('memory_limit', (string)$need);
+        }
+    }
+
+    /**
+     * Есть ли в файле HTML, скрипт или PHP (файл одновременно картинка и страница). Как в редакторе texted
+     */
+    public static function hasCode(string $path): bool
+    {
+        $fh = @fopen($path, 'rb');
+        if (!$fh) {
+            return true;
+        }
+        $tail = '';
+        try {
+            while (!feof($fh)) {
+                $chunk = $tail . (string)fread($fh, 1 << 20);
+                // только длинные признаки: короткие случайно встречаются в сжатых данных большой картинки
+                if (preg_match('~<(?:script|html|body|iframe|frame|frameset|svg|math|object|embed|applet|meta|link|base|style|img|details|form|input|button|select|textarea|template|video|audio|marquee)[\s/>]|[\s/"\']on[a-z]{4,}\s*=|<\?php|<!doctype|javascript:~i', $chunk) === 1) {
+                    return true;
+                }
+                $tail = substr($chunk, -64);
+            }
+        } finally {
+            fclose($fh);
+        }
+
+        return false;
+    }
+
+    /**
+     * Имя файла латиницей: «Фото отпуска 1.JPG» → foto-otpuska-1 (без расширения). Как в редакторе texted
+     */
+    public static function slugify(string $original): string
+    {
+        $base = pathinfo(str_replace('\\', '/', $original), PATHINFO_FILENAME);
+        if (class_exists('Normalizer')) {
+            $base = (string)(\Normalizer::normalize($base) ?: $base);
+        }
+        $base = function_exists('mb_strtolower') ? mb_strtolower($base, 'UTF-8') : strtolower($base);
+        $base = strtr($base, static::TRANSLIT);
+        if (function_exists('transliterator_transliterate')) {
+            $base = (string)transliterator_transliterate('Any-Latin; Latin-ASCII; Lower()', $base);
+        }
+        $slug = trim((string)preg_replace('/[^a-z0-9]+/', '-', $base), '-');
+        $slug = rtrim(substr($slug, 0, 60), '-');
+        if ($slug === '') {
+            $slug = 'file';
+        }
+        if (preg_match('/\A(?:con|prn|aux|nul|com[1-9]|lpt[1-9])\z/', $slug)) {
+            $slug = 'file-' . $slug;
+        }
+
+        return $slug;
+    }
+
+    /**
+     * Занимает свободное имя в каталоге: slug.ext, при совпадении slug-2.ext, slug-3.ext… Атомарно (fopen 'x'):
+     * два одновременных файла не получат одно имя, существующий файл не перезаписывается
+     */
+    protected static function reserve(string $dir, string $slug, string $extension): string
+    {
+        for ($n = 1; $n < 10000; $n++) {
+            $path = $dir . '/' . ($n === 1 ? $slug : $slug . '-' . $n) . '.' . $extension;
+            $handle = @fopen($path, 'xb');
+            if ($handle !== false) {
+                fclose($handle);
+                return $path;
+            }
+        }
+
+        throw new \RuntimeException('Не удалось подобрать имя файла');
+    }
+
+    /**
      * Можно ли хранить файл с таким именем: расширение из ALLOWED_EXTENSIONS (без учёта регистра), имя не начинается
-     * с точки и не содержит исполняемых частей (file.php.jpg)
+     * с точки и не содержит исполняемых частей (file.php.jpg), разделителей пути и управляющих символов
      */
     public static function isAllowedFileName(string $name): bool
     {
-        if ($name === '' || str_starts_with($name, '.')) {
+        if (!static::isAllowedDirName($name)) {
             return false;
         }
 
@@ -502,6 +785,15 @@ class Manager
         }
 
         return true;
+    }
+
+    /**
+     * Имя папки (и основа имени файла): не пустое, не с точки, без / \ и управляющих символов, до 255 байт
+     */
+    public static function isAllowedDirName(string $name): bool
+    {
+        return $name !== '' && strlen($name) <= 255 && !str_starts_with($name, '.')
+            && trim($name) === $name && preg_match('/[\/\\\\\x00-\x1F\x7F]/', $name) !== 1;
     }
 
     /**

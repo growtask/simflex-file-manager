@@ -15,7 +15,9 @@
 ## Состав
 
 - `src/FileManager/Manager.php` — API (`?method=getTree|getFileList|download|delete|createDir|rename|upload`):
-  корень каталога, проверка доступа, белый список расширений, изменяющие запросы — только со своего сайта;
+  корень каталога, проверка доступа, белый список расширений, изменяющие запросы — только POST со своего сайта
+  и с CSRF-токеном (`X-CSRF-Token`), путь не выходит из корня, корень не удаляется и не переименовывается;
+  загрузка — имя латиницей, без перезаписи, JPEG/PNG/WebP сжимаются в WebP до 2560 px;
 - `src/tpl/index.tpl` — окно на компонентах Layout ядра (`Common/Modal`, `Button`, `TextInput`, `Dropdown`,
   `Tooltip`);
 - `src/assets/styles/file-manager.scss` — стили на токенах ядра, собираются со стилями админки
@@ -27,7 +29,8 @@
 
 ```php
 // API: Kernel::executeFileManager()
-$manager = new \Simflex\FileManager\Manager($publicDir . '/uf', $canUseFileManager);
+// третий аргумент — проверка CSRF-токена изменяющего запроса
+$manager = new \Simflex\FileManager\Manager($publicDir . '/uf', $canUseFileManager, fn() => Csrf::isValid($request));
 $manager->handleRequest();
 ```
 

@@ -3,7 +3,7 @@
 /**
  * Окно файлового менеджера (file-window) на Common/Modal ядра Simflex CMS: шапка с крошками и «Закрыть», дерево папок
  * и кнопки папки (desktop), поиск и сортировка, сетка карточек (на планшете и телефоне — строки), сведения о файле
- * и «Готово», нижняя панель (планшет, телефон), окна «Переименовать» и «Новая папка», контекстное меню.
+ * и «Готово», нижняя панель (планшет, телефон), окна «Переименовать» и «Создать папку», контекстное меню.
  * Содержимое строит assets/js/file-manager.js по API Manager. Стили — assets/styles/file-manager.scss (собираются
  * со стилями админки)
  * @var string $fileManagerApi Адрес API (Manager::handleRequest())
@@ -23,6 +23,8 @@ use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownSize;
 use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownTheme;
 use Simflex\Core\Layout\Components\UI\Core\Dropdown\Layout as Dropdown;
 use Simflex\Core\Layout\Components\UI\Core\TextInput\Layout as TextInput;
+use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputLabelPos;
+use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputStyle;
 use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputSize;
 use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputTheme;
 use Simflex\Core\Layout\Components\UI\Core\Tooltip\Layout as Tooltip;
@@ -52,29 +54,36 @@ $tab = fn(string $name, string $label, string $action) => '<button type="button"
 $menuItem = fn(string $name, string $label, string $action, string $class = '') => '<button type="button"'
     . ' class="file-menu__item ' . $class . '" role="menuitem" data-fm-action="' . $action . '">' . $icon($name)
     . '<span>' . $label . '</span></button>';
-/** Окно с полем имени: переименование, новая папка */
-$nameModal = fn(string $id, string $title, string $action) => Modal::drawModal(
-    id: $id,
-    title: $title,
-    content: TextInput::drawInput(
-        placeholder: 'Название',
-        labelText: 'Название',
+/** Поле окна (Figma file-modal): подпись сверху, поле, подсказка под ним */
+$field = fn(string $label, string $placeholder, string $hint, array $attributes) => '<div class="file-modal__field">'
+    . TextInput::drawInput(
+        placeholder: $placeholder,
+        labelText: $label,
+        labelPos: TextInputLabelPos::Standard,
+        style: TextInputStyle::Outline,
         size: TextInputSize::Small,
         theme: TextInputTheme::from($theme),
-        attributes: ['data-fm-name' => '', 'autocomplete' => 'off'],
-    ),
+        reset: false,
+        attributes: $attributes + ['autocomplete' => 'off'],
+    )
+    . '<p class="file-modal__hint">' . htmlspecialchars($hint) . '</p></div>';
+/** Окно с полем имени (Figma file-modal: rename, folder): «Отменить» и главная кнопка справа */
+$nameModal = fn(string $id, string $title, string $text, string $content, string $saveText, string $action) => Modal::drawModal(
+    id: $id,
+    title: $title,
+    text: $text,
+    content: $content,
     footer: Button::drawButton(
-        text: 'Сохранить',
-        size: ButtonSize::Small,
-        theme: $buttonTheme,
-        attributes: ['data-fm-action' => $action],
-        iconLeft: 'check',
-    ) . Button::drawButton(
-        text: 'Отмена',
+        text: 'Отменить',
         style: ButtonStyle::Secondary,
         size: ButtonSize::Small,
         theme: $buttonTheme,
         attributes: ['data-modal-close' => ''],
+    ) . Button::drawButton(
+        text: $saveText,
+        size: ButtonSize::Small,
+        theme: $buttonTheme,
+        attributes: ['data-fm-action' => $action],
     ),
     theme: ModalTheme::from($theme),
     className: 'file-modal',
@@ -105,7 +114,7 @@ $window = '<div class="file-window__head">'
     )
     . Dropdown::drawSelect(
         name: '',
-        options: ['name' => 'По названию', 'date' => 'По дате', 'size' => 'По размеру', 'type' => 'По типу'],
+        options: ['name' => 'По названию', 'date' => 'Дата изменения', 'size' => 'Вес файла'],
         value: 'name',
         size: DropdownSize::Small,
         theme: DropdownTheme::from($theme),
@@ -154,8 +163,23 @@ $window = '<div class="file-window__head">'
         className: 'file-window file-window-theme_' . $theme,
         attributes: ['aria-label' => 'Файловый менеджер'],
     ) ?>
-    <?= $nameModal('sf-file-manager-rename', 'Переименовать', 'rename-save') ?>
-    <?= $nameModal('sf-file-manager-create', 'Новая папка', 'create-save') ?>
+    <?= $nameModal(
+        'sf-file-manager-rename',
+        'Переименовать',
+        'Введите новое название папки или файла.',
+        $field('Старое название', '', 'Предыдущее имя.', ['data-fm-old-name' => '', 'disabled' => ''])
+        . $field('Новое название', 'Новое имя', 'Без символов / и \.', ['data-fm-name' => '']),
+        'Применить',
+        'rename-save',
+    ) ?>
+    <?= $nameModal(
+        'sf-file-manager-create',
+        'Создать папку',
+        'Введите название новой папки.',
+        $field('Название папки', 'Папка', 'Латиницей или кириллицей.', ['data-fm-name' => '']),
+        'Создать',
+        'create-save',
+    ) ?>
     <div class="file-menu file-menu-theme_<?= $theme ?>" role="menu" data-fm-menu="file" hidden>
         <?= $menuItem('download', 'Скачать', 'download') ?>
         <?= $menuItem('edit', 'Переименовать', 'rename') ?>
@@ -164,9 +188,9 @@ $window = '<div class="file-window__head">'
         <?= $menuItem('trash', 'Удалить', 'delete', 'file-menu__item_danger') ?>
     </div>
     <div class="file-menu file-menu-theme_<?= $theme ?>" role="menu" data-fm-menu="folder" hidden>
-        <?= $menuItem('folder', 'Открыть', 'open') ?>
-        <?= $menuItem('edit', 'Переименовать', 'rename') ?>
         <?= $menuItem('folder-plus', 'Создать папку', 'create') ?>
+        <?= $menuItem('upload', 'Загрузить файлы', 'upload-to') ?>
+        <?= $menuItem('edit', 'Переименовать', 'rename') ?>
         <?= $menuItem('link', 'Копировать путь', 'copy-path') ?>
         <hr class="file-menu__line">
         <?= $menuItem('trash', 'Удалить', 'delete', 'file-menu__item_danger') ?>

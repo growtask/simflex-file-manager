@@ -23,6 +23,8 @@ const UPLOAD_ERRORS = {
     error: 'не загружен',
     forbidden: 'такой тип файла нельзя загрузить',
     error_save: 'не сохранён',
+    too_large: 'слишком большой',
+    bad_image: 'картинка повреждена или с посторонним кодом',
 };
 
 const root = document.querySelector('.file-manager');
@@ -32,7 +34,8 @@ const toast = (message, type = 'success') => (window.sfAdmin
     ? window.sfAdmin.toast(message, {type})
     : window.alert(message));
 const confirmAction = (message, title, confirmText) => window.sfAdmin
-    ? window.sfAdmin.confirm(message, {title, confirmText, danger: true})
+    // Figma file-modal: «Удалить» — основная кнопка
+    ? window.sfAdmin.confirm(message, {title, confirmText})
     : Promise.resolve(window.confirm(message));
 
 /** Расширения для MIME-типов в accept (как у <input type=file accept>) */
@@ -124,6 +127,11 @@ if (root && modal) {
         // элемент, для которого открыто меню или окно переименования
         target: null,
         loaded: false,
+        // номер последнего запроса дерева и отмена запроса списка (устаревшие ответы не применяются)
+        treeRequest: 0,
+        filesAbort: null,
+        // папка для «Загрузить файлы» из меню папки (пока открыт выбор файлов)
+        uploadPath: null,
     };
 
     /** Можно ли выбрать: папка — всегда, файл — если подходит под accept */
@@ -149,11 +157,13 @@ if (root && modal) {
     };
 
     /** Запрос к API: изменяющие — POST */
-    const call = async (method, params = {}, files = null) => {
+    const call = async (method, params = {}, files = null, signal = undefined) => {
         const isModifying = ['delete', 'createDir', 'rename', 'upload'].includes(method);
         let url = `${api}?method=${method}`;
-        let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}};
+        let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}, signal};
         if (isModifying) {
+            // CSRF-токен сессии админки: без него сервер изменяющий запрос не принимает
+            options.headers['X-CSRF-Token'] = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
             const body = new FormData();
             Object.entries(params).forEach(([key, value]) => body.append(key, value));
             (files ?? []).forEach((file) => body.append('file[]', file));
@@ -193,7 +203,8 @@ if (root && modal) {
         nodes.forEach((node) => {
             const item = element('li', 'file-tree__item');
             item.setAttribute('role', 'none');
-            const hasChildren = node.data.length > 0;
+            // дерево подгружается по уровням: data === null — вложенные папки ещё не загружены
+            const hasChildren = node.has_children ?? (node.data?.length > 0);
             const isOpen = state.expanded.has(node.path);
             const row = element('button', 'file-tree-row');
             row.type = 'button';
@@ -217,7 +228,7 @@ if (root && modal) {
             }
             row.append(arrow, icon('folder', 'fm-icon file-tree-row__icon'), element('span', 'file-tree-row__name', node.name));
             item.append(row);
-            if (hasChildren && isOpen) {
+            if (hasChildren && isOpen && node.data) {
                 item.append(drawTree(node.data, depth + 1));
             }
             list.append(item);
@@ -258,7 +269,7 @@ if (root && modal) {
         name: (a, b) => a.name.localeCompare(b.name, 'ru', {numeric: true}),
         date: (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
         size: (a, b) => (b.bytes ?? 0) - (a.bytes ?? 0),
-        type: (a, b) => (a.name.split('.').pop() ?? '').localeCompare(b.name.split('.').pop() ?? '') || compare.name(a, b),
+
     };
 
     const getVisibleItems = () => {
@@ -272,7 +283,7 @@ if (root && modal) {
 
     const sizeText = (item) => (item.type === 'dir'
         ? `${item.count} ${['элемент', 'элемента', 'элементов'][plural(item.count)]}`
-        : `${item.size} ${item.size_ext}`);
+        : `${Number(item.size).toLocaleString('ru-RU')} ${item.size_ext}`);
 
     const plural = (count) => {
         const mod10 = count % 10;
@@ -391,13 +402,84 @@ if (root && modal) {
 
     /* ---------- загрузка данных ---------- */
 
+    /** Узел дерева по пути */
+    const findNode = (nodes, path) => {
+        for (const node of nodes ?? []) {
+            if (node.path === path) {
+                return node;
+            }
+            if (path.startsWith(node.path + '/')) {
+                return findNode(node.data, path);
+            }
+        }
+        return null;
+    };
+
+    /** Раскрытые папки по глубине: родитель раньше вложенной */
+    const expandedPaths = () => [...state.expanded].sort((a, b) => a.split('/').length - b.split('/').length);
+
+    /**
+     * Дерево по уровням: корень и раскрытые папки — по одному уровню (getTree depth=1), а не весь каталог файлов.
+     * Ответ устаревшего запроса (дерево уже перечитывается заново) не применяется
+     */
     const loadTree = async () => {
-        state.tree = await call('getTree', {path: ''});
+        const request = ++state.treeRequest;
+        const paths = expandedPaths();
+        const [root, ...levels] = await Promise.all([
+            call('getTree', {path: '', depth: 1}),
+            // раскрытая папка могла исчезнуть — без неё
+            ...paths.map((path) => call('getTree', {path, depth: 1}).catch(() => null)),
+        ]);
+        if (request !== state.treeRequest) {
+            return;
+        }
+        const children = new Map(paths.map((path, index) => [path, levels[index]]));
+        const attach = (nodes) => nodes.forEach((node) => {
+            node.data = children.get(node.path) ?? null;
+            if (node.data) {
+                attach(node.data);
+            }
+        });
+        attach(root);
+        state.tree = root;
         renderTree();
     };
 
+    /** Догружает вложенные папки раскрытых узлов, которых ещё нет (раскрыли стрелкой или открыли глубокую папку) */
+    const loadMissingLevels = async () => {
+        for (const path of expandedPaths()) {
+            const node = findNode(state.tree, path);
+            if (node && node.data === null && node.has_children !== false) {
+                const request = state.treeRequest;
+                const data = await call('getTree', {path, depth: 1}).catch(() => []);
+                if (request !== state.treeRequest) {
+                    return;
+                }
+                node.data = data;
+                renderTree();
+            }
+        }
+    };
+
+    /** Список папки: прежний запрос отменяется, ответ для другой папки не применяется (быстрые клики по дереву) */
     const loadFiles = async () => {
-        state.items = await call('getFileList', {path: state.path, include_dirs: 1});
+        const path = state.path;
+        state.filesAbort?.abort();
+        const abort = new AbortController();
+        state.filesAbort = abort;
+        let items;
+        try {
+            items = await call('getFileList', {path, include_dirs: 1}, null, abort.signal);
+        } catch (error) {
+            if (abort.signal.aborted) {
+                return;
+            }
+            throw error;
+        }
+        if (abort.signal.aborted || path !== state.path) {
+            return;
+        }
+        state.items = items;
         // выбор остаётся только у существующих
         const paths = new Set(state.items.map((item) => item.path));
         state.selected = new Set([...state.selected].filter((path) => paths.has(path)));
@@ -414,6 +496,7 @@ if (root && modal) {
         parts.forEach((part, index) => state.expanded.add('/' + parts.slice(0, index + 1).join('/')));
         renderCrumbs();
         renderTree();
+        loadMissingLevels().catch(report);
         try {
             await loadFiles();
         } catch (error) {
@@ -488,8 +571,13 @@ if (root && modal) {
     const getItem = (path) => state.items.find((item) => item.path === path)
         ?? {type: 'dir', path, name: baseName(path)};
 
+    /** Окно имени: rename — прежнее имя в «Старое название» и в поле, create — пустое поле */
     const openNameModal = (target, value) => {
         const input = target.querySelector('[data-fm-name]');
+        const oldName = target.querySelector('[data-fm-old-name]');
+        if (oldName) {
+            oldName.value = value;
+        }
         input.value = value;
         window.SimflexModal.open(target.id);
         input.focus();
@@ -523,26 +611,36 @@ if (root && modal) {
         if (!items.length) {
             return;
         }
+        // тексты — Figma file-modal (delfolder, delfile)
         const isFolder = items.length === 1 && items[0].type === 'dir';
-        const message = items.length > 1
-            ? `Будет удалено: ${items.length}. Корзины нет, восстановить файлы нельзя.`
-            : `«${items[0].name}» будет ${isFolder ? 'удалена со всем содержимым' : 'удалён'}. Корзины нет.`;
-        const isConfirmed = await confirmAction(message, isFolder ? 'Удалить папку?' : 'Удалить файл?', 'Удалить');
+        const [title, message] = items.length > 1
+            ? ['Удалить файлы?', `Будет удалено: ${items.length}. Файлы будут удалены сразу.`]
+            : (isFolder
+                ? ['Удалить папку?', 'Папка и всё, что в ней, будут удалены сразу.']
+                : ['Удалить файл?', 'Файл будет удалён сразу.']);
+        const isConfirmed = await confirmAction(message, title, 'Удалить');
         if (!isConfirmed) {
             return;
         }
+        const deleted = [];
         try {
             for (const item of items) {
                 await call('delete', {path: item.path});
+                deleted.push(item);
             }
-            if (items.some((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')))) {
-                await navigate(parentPath(items.find((item) => item.type === 'dir').path));
-            }
-            state.selected.clear();
-            await refresh();
         } catch (error) {
-            report(error);
+            // несколько: какие уже удалены, а какой нет
+            const failed = items[deleted.length];
+            toast(items.length > 1
+                ? `Удалено ${deleted.length} из ${items.length}. «${failed.name}»: ${error.message || 'ошибка'}`
+                : error.message || 'Ошибка', 'error');
         }
+        const removedDir = deleted.find((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')));
+        if (removedDir) {
+            await navigate(parentPath(removedDir.path));
+        }
+        state.selected.clear();
+        await refresh();
     };
 
     const copyPath = async (item) => {
@@ -563,7 +661,11 @@ if (root && modal) {
         link.remove();
     };
 
-    const upload = async (chosen) => {
+    /** Загрузка в папку path (по умолчанию — открытую; «Загрузить файлы» в меню папки — в неё) */
+    const upload = async (chosen, path = state.path) => {
+        if (path !== state.path) {
+            await navigate(path);
+        }
         // при accept — только подходящие файлы
         const files = chosen.filter((file) => isAccepted({type: 'file', name: file.name}));
         const skipped = chosen.filter((file) => !files.includes(file));
@@ -579,7 +681,7 @@ if (root && modal) {
         renderFiles();
         let statuses = [];
         try {
-            statuses = await call('upload', {path: state.path}, [...files]);
+            statuses = await call('upload', {path}, [...files]);
         } catch (error) {
             report(error);
         }
@@ -649,6 +751,11 @@ if (root && modal) {
                     remove([getItem(state.path)]);
                 }
                 break;
+            case 'upload-to':
+                // выбор файлов — сразу по нажатию (иначе браузер не откроет окно выбора)
+                state.uploadPath = item.path;
+                fileInput.click();
+                break;
             case 'open':
                 navigate(item.path);
                 break;
@@ -703,6 +810,7 @@ if (root && modal) {
             if (event.target.closest('[data-fm-toggle]') && !row.classList.contains('file-tree-row_leaf')) {
                 state.expanded.has(path) ? state.expanded.delete(path) : state.expanded.add(path);
                 renderTree();
+                loadMissingLevels().catch(report);
             } else {
                 navigate(path);
             }
@@ -799,9 +907,20 @@ if (root && modal) {
     searchInput.addEventListener('input', renderFiles);
     sortInput.addEventListener('change', renderFiles);
     fileInput.addEventListener('change', () => {
-        upload([...fileInput.files]);
+        const path = state.uploadPath ?? state.path;
+        state.uploadPath = null;
+        upload([...fileInput.files], path);
         fileInput.value = '';
     });
+    fileInput.addEventListener('cancel', () => {
+        state.uploadPath = null;
+    });
+    // подсказка поиска — короче на телефоне (Figma: «Название файла»)
+    const searchPlaceholder = () => {
+        searchInput.placeholder = window.matchMedia('(max-width: 811px)').matches ? 'Название файла' : 'Введите название файла';
+    };
+    searchPlaceholder();
+    window.matchMedia('(max-width: 811px)').addEventListener('change', searchPlaceholder);
     dialog.addEventListener('scroll', closeMenus, true);
 
     // перетаскивание файлов в окно

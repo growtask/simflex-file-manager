@@ -178,6 +178,19 @@
         border-left: 1px solid var(--fm-line);
         @include spacing(padding-left, 8px);
         @include spacing(width, 176px);
+
+        // Figma: сортировка — текст со стрелкой, без заливки и рамки поля
+        .dropdown__field,
+        .dropdown__field:hover,
+        .dropdown__field:focus-visible {
+            background: none;
+            border-color: transparent;
+            box-shadow: none;
+        }
+
+        .dropdown__value {
+            color: var(--fm-text);
+        }
     }
 
     &__board {
@@ -192,7 +205,8 @@
 
     &__files {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(#{vw(160px)}, 1fr));
+        // Figma: 4 карточки по 160 в окне 920; минимум меньше — 4 колонки и с полосой прокрутки
+        grid-template-columns: repeat(auto-fill, minmax(#{vw(148px)}, 1fr));
         align-content: start;
         @include spacing(gap, 12px, 12px, 0, 0);
         @include spacing(padding-bottom, 12px, 12px, 0, 0);
@@ -644,7 +658,7 @@
             color: var(--fm-icon);
         }
 
-        &_danger,
+        // Figma: «Удалить» — красный только значок, подпись как у остальных пунктов
         &_danger .fm-icon {
             color: var(--color-states-error-medium);
         }
@@ -805,4 +819,21 @@
     .file-window:not(.file-window_select) .file-tabbar__item[data-fm-action='done'] {
         display: none;
     }
+}
+
+/* Окна «Переименовать» и «Создать папку» (Figma file-modal): поле с подписью и подсказкой под ним */
+.file-modal__field + .file-modal__field {
+    @include spacing(margin-top, 16px);
+}
+
+.file-modal__hint {
+    margin: 0;
+    color: var(--color-text-icon-gray-medium);
+    @include spacing(margin-top, 6px);
+    @include ui-xs-light;
+}
+
+/* Figma file-modal: две кнопки поровну на всю ширину */
+.file-modal .modal__footer > .btn {
+    flex: 1 1 0;
 }
