@@ -47,13 +47,37 @@ $page->jsModule($fileManagerAssets . '/js/file-manager.js');
 ```js
 window.fileManager.open({
     multiple: false,
+    // какие файлы можно выбрать: расширения или строка как у <input type=file accept>; без accept — любые
+    accept: ['jpg', 'jpeg', 'png', 'webp', 'gif'], // или 'image/*,.pdf'
     onSelect: (files) => {
         // files: [{path: '/images/a.png', url: '/uf/images/a.png', name: 'a.png', isImage: true}]
     },
+    // окно закрыто без выбора: крестик, Esc, подложка, close() или новый open()
+    onCancel: () => {},
 });
+
+// то же через Promise: файлы по «Готово», null при отмене
+const files = await window.fileManager.open({select: true, accept: 'image/*'});
+
 window.fileManager.close();
 // прежний вызов: callback получает путь первого файла от корня (/images/a.png)
 window.fileManager.init((path) => {});
 ```
 
-Без `onSelect` окно открывается для управления файлами, кнопки «Готово» нет.
+- На одно открытие — ровно один ответ: `onSelect` или `onCancel` (и Promise с файлами или `null`). `open()` при
+  открытом окне отменяет прежний вызов и продолжает в том же окне с новыми параметрами.
+- Режим выбора (кнопка «Готово») — при `onSelect` или `select: true`. Без них окно открывается для работы
+  с файлами, «Готово» недоступна.
+- При `accept` неподходящие файлы видны, но неактивны (не выбираются, «Готово» их не отдаёт); папки доступны всегда.
+  Через окно загружаются только подходящие файлы, о прочих — сообщение.
+- Окно открывается поверх уже открытых окон админки (стопка `Common/Modal` ядра), Esc закрывает только верхнее.
+
+Выбор файла для редактора texted (`mediaSource: 'manager'`):
+
+```js
+pickFile: ({multiple, extensions}) => window.fileManager.open({
+    multiple,
+    select: true,
+    accept: extensions || undefined,
+}).then((files) => files && files.map((file) => ({url: file.url, alt: '', name: file.name}))),
+```

@@ -563,6 +563,25 @@
         }
     }
 
+    // не подходит под accept окна: видна, но не выбирается (в Figma состояния нет — приглушена, как uploading)
+    &_disabled {
+        cursor: default;
+
+        &:hover,
+        &:active {
+            background: none;
+            box-shadow: none;
+        }
+
+        .file-card__preview {
+            opacity: 0.4;
+        }
+
+        .file-card__name {
+            color: var(--fm-muted);
+        }
+    }
+
     &__loader {
         border: 3px solid var(--fm-selected);
         border-top-color: var(--color-main-color1-main);

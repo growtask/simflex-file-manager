@@ -2,8 +2,13 @@
  * Файловый менеджер (ES-модуль, без jQuery): окно file-window из tpl/index.tpl, данные — API Manager
  * (data-fm-api: ?method=getTree|getFileList|download|delete|createDir|rename|upload).
  *
- * Открытие: window.fileManager.open({multiple, onSelect}) — onSelect получает выбранные файлы
- * [{path, url, name, isImage}] (path — от корня файлов, url — с корнем, например /uf/images/a.png);
+ * Открытие: window.fileManager.open({multiple, accept, onSelect, onCancel, select}) — окно выбора файлов.
+ * Выбранные файлы [{path, url, name, isImage}] (path — от корня файлов, url — с корнем, например /uf/images/a.png)
+ * получает onSelect по «Готово»; закрытие без выбора (крестик, Esc, подложка, close(), новый open()) — onCancel.
+ * На одно открытие — ровно один ответ. open() возвращает Promise: файлы по «Готово», null при отмене.
+ * Режим выбора («Готово» доступно) — при onSelect или select: true; без них окно только для работы с файлами.
+ * accept — какие файлы можно выбрать: массив расширений (['jpg', 'png']) или строка как у <input type=file accept>
+ * ('image/*,.pdf'); остальные файлы видны, но неактивны, загрузить через окно можно только подходящие.
  * window.fileManager.init(callback) — прежний вызов (плагин TinyMCE fm): callback(path) одного файла.
  *
  * Окно: дерево папок, крошки, поиск и сортировка, выбор файла (Ctrl/⌘ или режим multiple — несколько),
@@ -29,6 +34,48 @@ const toast = (message, type = 'success') => (window.sfAdmin
 const confirmAction = (message, title, confirmText) => window.sfAdmin
     ? window.sfAdmin.confirm(message, {title, confirmText, danger: true})
     : Promise.resolve(window.confirm(message));
+
+/** Расширения для MIME-типов в accept (как у <input type=file accept>) */
+const MIME_EXTENSIONS = {
+    'image/*': ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic', 'svg'],
+    'video/*': ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg', 'mpeg', '3gp'],
+    'audio/*': ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac'],
+    'image/jpeg': ['jpg', 'jpeg'],
+    'image/png': ['png'],
+    'image/gif': ['gif'],
+    'image/webp': ['webp'],
+    'image/avif': ['avif'],
+    'image/svg+xml': ['svg'],
+    'video/mp4': ['mp4', 'm4v'],
+    'video/webm': ['webm'],
+    'audio/mpeg': ['mp3'],
+    'audio/wav': ['wav'],
+    'application/pdf': ['pdf'],
+};
+
+/**
+ * accept → множество расширений в нижнем регистре; null — подходит любой файл (accept не задан, '*' или '*\/*')
+ * @param {string|string[]|null|undefined} accept
+ * @returns {Set<string>|null}
+ */
+const parseAccept = (accept) => {
+    if (accept === null || accept === undefined || accept === '') {
+        return null;
+    }
+    const parts = (Array.isArray(accept) ? accept : String(accept).split(','))
+        .map((part) => String(part).trim().toLowerCase())
+        .filter(Boolean);
+    if (!parts.length || parts.some((part) => part === '*' || part === '*/*')) {
+        return null;
+    }
+    const extensions = new Set();
+    parts.forEach((part) => (part.includes('/') ? MIME_EXTENSIONS[part] ?? [] : [part.replace(/^\./, '')])
+        .forEach((extension) => extensions.add(extension)));
+    return extensions;
+};
+
+/** Расширение имени в нижнем регистре: photo.JPG → jpg, без точки — пусто */
+const extensionOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
 
 /** Последний элемент пути: /images/a.png → a.png */
 const baseName = (path) => path.split('/').filter(Boolean).pop() ?? '';
@@ -68,11 +115,19 @@ if (root && modal) {
         failed: [],
         uploading: [],
         multiple: false,
-        onSelect: null,
+        // режим выбора: «Готово» отдаёт файлы
+        select: false,
+        // расширения, которые можно выбрать (parseAccept), null — любые
+        accept: null,
+        // файлы, выбранные «Готово»: отдаются вызвавшему при закрытии окна
+        result: null,
         // элемент, для которого открыто меню или окно переименования
         target: null,
         loaded: false,
     };
+
+    /** Можно ли выбрать: папка — всегда, файл — если подходит под accept */
+    const isAccepted = (item) => item.type === 'dir' || !state.accept || state.accept.has(extensionOf(item.name));
 
     const icon = (name, className = 'fm-icon') => {
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -235,6 +290,11 @@ if (root && modal) {
         if (item.path) {
             card.dataset.fmPath = item.path;
             card.dataset.fmKind = item.type;
+            // не подходит под accept: видна, но не выбирается (меню — работает)
+            if (!isAccepted(item)) {
+                card.classList.add('file-card_disabled');
+                card.setAttribute('aria-disabled', 'true');
+            }
         }
 
         const preview = element('span', 'file-card__preview');
@@ -311,8 +371,8 @@ if (root && modal) {
             name.textContent = '';
             meta.textContent = '';
         }
-        const files = selected.filter((item) => item.type === 'file');
-        const isDoneDisabled = !state.onSelect || !files.length;
+        const files = selected.filter((item) => item.type === 'file' && isAccepted(item));
+        const isDoneDisabled = !state.select || !files.length;
         [doneButton, find('.file-tabbar [data-fm-action="done"]')].forEach((button) => setDisabled(button, isDoneDisabled));
         setDisabled(find('[data-fm-delete-folder]'), state.path === '');
     };
@@ -372,6 +432,9 @@ if (root && modal) {
     /* ---------- выбор ---------- */
 
     const select = (path, isToggle) => {
+        if (!isAccepted(getItem(path))) {
+            return;
+        }
         if (isToggle) {
             state.selected.has(path) ? state.selected.delete(path) : state.selected.add(path);
         } else {
@@ -380,14 +443,44 @@ if (root && modal) {
         updateSelection();
     };
 
+    /** «Готово»: выбранные подходящие файлы уходят вызвавшему, когда окно закроется (modal:close) */
     const done = () => {
-        const files = state.items.filter((item) => item.type === 'file' && state.selected.has(item.path));
-        if (!files.length || !state.onSelect) {
+        const files = state.items.filter((item) => item.type === 'file' && state.selected.has(item.path) && isAccepted(item));
+        if (!files.length || !state.select) {
             return;
         }
-        const onSelect = state.onSelect;
+        state.result = files.map((item) => ({path: item.path, url: filesRoot + item.path, name: item.name, isImage: Boolean(item.is_pic)}));
         window.SimflexModal.close(MODAL_ID);
-        onSelect(files.map((item) => ({path: item.path, url: filesRoot + item.path, name: item.name, isImage: Boolean(item.is_pic)})));
+    };
+
+    /** Двойной клик или Enter по файлу: выбрать только его и сразу «Готово» */
+    const pick = (path) => {
+        if (!isAccepted(getItem(path))) {
+            return;
+        }
+        state.selected = new Set([path]);
+        done();
+    };
+
+    /** Открытие окна (open): ответ ждёт ровно один — {onSelect, onCancel, resolve} */
+    let request = null;
+
+    /** Ответ на открытие: files — onSelect, null — onCancel; Promise open() получает то же */
+    const answer = (files) => {
+        const current = request;
+        request = null;
+        if (!current) {
+            return;
+        }
+        try {
+            if (files) {
+                current.onSelect?.(files);
+            } else {
+                current.onCancel?.();
+            }
+        } finally {
+            current.resolve(files);
+        }
     };
 
     /* ---------- действия ---------- */
@@ -470,7 +563,14 @@ if (root && modal) {
         link.remove();
     };
 
-    const upload = async (files) => {
+    const upload = async (chosen) => {
+        // при accept — только подходящие файлы
+        const files = chosen.filter((file) => isAccepted({type: 'file', name: file.name}));
+        const skipped = chosen.filter((file) => !files.includes(file));
+        if (skipped.length) {
+            const allowed = state.accept.size ? `можно выбрать только ${[...state.accept].join(', ')}` : 'файлы выбрать нельзя';
+            toast(`Здесь ${allowed}. Не загружено: ${skipped.map((file) => file.name).join(', ')}`, 'error');
+        }
         if (!files.length) {
             return;
         }
@@ -563,7 +663,8 @@ if (root && modal) {
                 download(item);
                 break;
             case 'delete':
-                remove(item.type === 'file' && selectedItems.length > 1 ? selectedItems : [item]);
+                // несколько выбранных — если меню открыто на одном из них (неактивный файл не выбирается)
+                remove(item.type === 'file' && selectedItems.length > 1 && state.selected.has(item.path) ? selectedItems : [item]);
                 break;
             case 'rename-save':
                 saveName(renameModal, 'rename');
@@ -631,8 +732,7 @@ if (root && modal) {
         if (card.dataset.fmKind === 'dir') {
             navigate(card.dataset.fmPath);
         } else {
-            state.selected = new Set([card.dataset.fmPath]);
-            done();
+            pick(card.dataset.fmPath);
         }
     });
 
@@ -669,7 +769,7 @@ if (root && modal) {
         }
         if (event.key === 'Enter') {
             event.preventDefault();
-            card.dataset.fmKind === 'dir' ? navigate(card.dataset.fmPath) : (state.selected = new Set([card.dataset.fmPath]), done());
+            card.dataset.fmKind === 'dir' ? navigate(card.dataset.fmPath) : pick(card.dataset.fmPath);
         } else if (event.key === 'Delete') {
             event.preventDefault();
             remove(state.selected.size ? state.items.filter((item) => state.selected.has(item.path)) : [getItem(card.dataset.fmPath)]);
@@ -732,27 +832,55 @@ if (root && modal) {
         upload([...event.dataTransfer.files]);
     });
 
-    modal.addEventListener('modal:close', () => {
+    // любое закрытие окна (крестик, Esc, подложка, close(), «Готово»): ответ вызвавшему
+    modal.addEventListener('modal:close', (event) => {
+        if (event.target !== modal) {
+            return;
+        }
         closeMenus();
         state.added.clear();
         state.failed = [];
+        const files = state.result;
+        state.result = null;
+        answer(files);
     });
 
     /* ---------- API ---------- */
 
-    const open = ({multiple = false, onSelect = null} = {}) => {
+    /**
+     * @param {{multiple?: boolean, accept?: string|string[]|null, onSelect?: Function|null, onCancel?: Function|null,
+     *     select?: boolean}} options
+     * @returns {Promise<Array<{path: string, url: string, name: string, isImage: boolean}>|null>}
+     */
+    const open = ({multiple = false, accept = null, onSelect = null, onCancel = null, select = Boolean(onSelect)} = {}) => {
+        // окно уже открыто другим вызовом: тот получает отмену
+        answer(null);
+        const promise = new Promise((resolve) => {
+            request = {onSelect, onCancel, resolve};
+        });
+        state.result = null;
         state.multiple = multiple;
-        state.onSelect = onSelect;
+        state.select = select;
+        state.accept = parseAccept(accept);
+        fileInput.accept = state.accept ? [...state.accept].map((extension) => '.' + extension).join(',') : '';
         state.selected.clear();
-        modal.classList.toggle('file-window_select', Boolean(onSelect));
-        window.SimflexModal.open(MODAL_ID);
+        modal.classList.toggle('file-window_select', select);
+        const isOpen = window.SimflexModal.isOpen(MODAL_ID);
+        if (!isOpen) {
+            window.SimflexModal.open(MODAL_ID);
+        }
         if (!state.loaded) {
             state.loaded = true;
             navigate('');
             loadTree().catch(report);
+        } else if (isOpen) {
+            // то же окно с новыми условиями: карточки перерисовываются сразу
+            renderFiles();
+            refresh();
         } else {
             refresh();
         }
+        return promise;
     };
 
     window.fileManager = {
