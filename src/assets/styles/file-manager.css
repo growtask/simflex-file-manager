@@ -60,9 +60,19 @@
     --fm-shadow-l: 0 0 40px 5px rgba(13, 13, 13, 0.05);
 
     --fm-font: var(--font-family-body, "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+    /* движение — как в texted (--ui-ease, --ui-ease-out), чуть дольше для окон и списка */
     --fm-ease: cubic-bezier(0.14, 0.18, 0.16, 1.02);
-    --fm-fast: 120ms;
-    --fm-base: 180ms;
+    --fm-ease-out: cubic-bezier(0.2, 0, 0, 1);
+    --fm-fast: 140ms;
+    --fm-base: 200ms;
+    --fm-slow: 260ms;
+
+    /* полосы прокрутки — Scrollbar/scrollbar дизайн-системы (как в texted): classic, без стрелок, 4 px */
+    --fm-sb-track: rgba(237, 243, 250, 0.2);
+    --fm-sb-track-active: rgba(237, 243, 250, 0.5);
+    --fm-sb-thumb: rgba(99, 161, 247, 0.2);
+    --fm-sb-thumb-hover: rgba(25, 117, 247, 0.5);
+    --fm-sb-thumb-press: rgba(20, 97, 204, 0.5);
 
     font-family: var(--fm-font);
     font-size: 14px;
@@ -73,6 +83,11 @@
 }
 
 .fm-root[data-fm-theme="dark"] {
+    --fm-sb-track: rgba(77, 77, 77, 0.2);
+    --fm-sb-track-active: rgba(77, 77, 77, 0.5);
+    --fm-sb-thumb: rgba(25, 117, 247, 0.2);
+    --fm-sb-thumb-hover: rgba(99, 161, 247, 0.5);
+    --fm-sb-thumb-press: rgba(210, 226, 247, 0.5);
     --fm-bg: var(--fm-darker);
     --fm-text: var(--fm-lighter);
     --fm-icon: var(--fm-white);
@@ -169,29 +184,53 @@ html:has(.fm-dialog[open]) {
     overflow: hidden;
 }
 
+/*
+ * Открытие и закрытие — плавные в обе стороны: переход по display/overlay (allow-discrete) держит окно на экране,
+ * пока оно гаснет; @starting-style — исходное состояние при открытии. Без поддержки — мгновенно
+ */
 .fm-dialog:not([open]) {
     display: none;
 }
 
+.fm-dialog {
+    transition: display var(--fm-slow) allow-discrete, overlay var(--fm-slow) allow-discrete;
+}
+
 .fm-dialog::backdrop {
+    background: transparent;
+    transition: background-color var(--fm-slow) var(--fm-ease), display var(--fm-slow) allow-discrete,
+        overlay var(--fm-slow) allow-discrete;
+}
+
+.fm-dialog[open]::backdrop {
     background: var(--fm-backdrop);
-    animation: fm-fade var(--fm-base) var(--fm-ease);
+}
+
+.fm-dialog > .fm-dialog__box {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+    transition: opacity var(--fm-slow) var(--fm-ease-out), transform var(--fm-slow) var(--fm-ease-out);
 }
 
 .fm-dialog[open] > .fm-dialog__box {
-    animation: fm-rise var(--fm-base) var(--fm-ease);
+    opacity: 1;
+    transform: none;
+}
+
+@starting-style {
+    .fm-dialog[open]::backdrop {
+        background: transparent;
+    }
+
+    .fm-dialog[open] > .fm-dialog__box {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+    }
 }
 
 @keyframes fm-fade {
     from {
         opacity: 0;
-    }
-}
-
-@keyframes fm-rise {
-    from {
-        opacity: 0;
-        transform: translateY(8px) scale(0.99);
     }
 }
 
@@ -399,7 +438,6 @@ button.fm-crumbs__item:hover {
     min-height: 0;
     overflow-y: auto;
     padding-top: 4px;
-    scrollbar-width: thin;
 }
 
 .fm-tree ul {
@@ -559,7 +597,6 @@ button.fm-crumbs__item:hover {
     min-height: 0;
     overflow-y: auto;
     padding: 4px 12px 12px;
-    scrollbar-width: thin;
 }
 
 .fm-files {
@@ -1398,13 +1435,19 @@ button.fm-crumbs__item:hover {
         padding: 0 0 var(--fm-keyboard, 0px);
     }
 
-    /* шторка выезжает снизу */
-    .fm-dialog_modal[open] > .fm-dialog__box {
-        animation: fm-sheet var(--fm-base) var(--fm-ease);
+    /* шторка выезжает снизу и уезжает вниз */
+    .fm-dialog_modal > .fm-dialog__box {
+        opacity: 1;
+        transform: translateY(100%);
     }
 
-    @keyframes fm-sheet {
-        from {
+    .fm-dialog_modal[open] > .fm-dialog__box {
+        transform: none;
+    }
+
+    @starting-style {
+        .fm-dialog_modal[open] > .fm-dialog__box {
+            opacity: 1;
             transform: translateY(100%);
         }
     }
@@ -1468,5 +1511,193 @@ button.fm-crumbs__item:hover {
 
     .fm-card:hover {
         box-shadow: none;
+    }
+}
+
+/* ---------- полосы прокрутки (Figma Scrollbar/scrollbar, как в texted) ---------- */
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-button {
+    display: none;
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-track {
+    border-radius: 9999px;
+    background: var(--fm-sb-track);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-track:hover {
+    background: var(--fm-sb-track-active);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: var(--fm-sb-thumb);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb:hover {
+    background: var(--fm-sb-thumb-hover);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb:active {
+    background: var(--fm-sb-thumb-press);
+}
+
+/* Firefox: только цвета покоя (наведение и нажатие браузер не поддерживает) */
+@supports not selector(::-webkit-scrollbar) {
+    .fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box) {
+        scrollbar-width: thin;
+        scrollbar-color: var(--fm-sb-thumb) var(--fm-sb-track);
+    }
+}
+
+/* ---------- режим отметки: внизу слева вместо кнопок папки — «Отменить выбор» ---------- */
+
+.fm-tools__cancel {
+    display: none;
+    flex: 1;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--fm-tool);
+}
+
+.fm-tools__cancel:hover {
+    background: var(--fm-accent-lighter);
+}
+
+.fm-window_checking .fm-tools > .fm-tool {
+    display: none;
+}
+
+.fm-window_checking .fm-tools__cancel {
+    display: inline-flex;
+    animation: fm-swap var(--fm-base) var(--fm-ease-out);
+}
+
+.fm-tools > .fm-tool {
+    animation: fm-swap var(--fm-base) var(--fm-ease-out);
+}
+
+@keyframes fm-swap {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+}
+
+/* ---------- список: карточки появляются мягко, с небольшой очередью ---------- */
+
+.fm-files_in > .fm-card {
+    animation: fm-card-in var(--fm-slow) var(--fm-ease-out) both;
+    animation-delay: calc(min(var(--i, 0), 12) * 18ms);
+}
+
+@keyframes fm-card-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+}
+
+/* раскрытая ветка дерева */
+.fm-tree__group_in {
+    animation: fm-card-in var(--fm-base) var(--fm-ease-out);
+}
+
+/* меню закрывается плавно */
+.fm-pop.is-closing {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.99);
+    transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+/* галочка появляется с лёгким увеличением */
+.fm-card__check {
+    transform: scale(0.85);
+    transition: opacity var(--fm-base) var(--fm-ease-out), transform var(--fm-base) var(--fm-ease-out);
+}
+
+.fm-card:hover .fm-card__check,
+.fm-card:focus-visible .fm-card__check,
+.fm-files_multi .fm-card__check {
+    transform: none;
+}
+
+/* ---------- окно «Сжать перед загрузкой?» ---------- */
+
+.fm-compress {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.fm-compress__item {
+    padding: 12px 16px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-field);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* флажок (Switches/check-box): квадрат 20 со скруглением, отметка — цветом акцента */
+.fm-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fm-desc);
+    cursor: pointer;
+    user-select: none;
+}
+
+.fm-check__input {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--fm-accent);
+    cursor: pointer;
+}
+
+/* «Выбрать» в меню — только на сенсорных и узких экранах (на компьютере — галочка при наведении) */
+.fm-item_touch {
+    display: none;
+}
+
+@media (max-width: 811px), (hover: none) {
+    .fm-item_touch {
+        display: flex;
+    }
+}
+
+/* нижняя панель телефона в режиме отметки: «Отменить», «Удалить», «Готово» */
+.fm-tabbar__item_check {
+    display: none;
+}
+
+@media (max-width: 811px) {
+    .fm-window_checking .fm-tabbar__item:not(.fm-tabbar__item_check) {
+        display: none;
+    }
+
+    .fm-window_checking .fm-tabbar__item_check {
+        display: flex;
+        animation: fm-swap var(--fm-base) var(--fm-ease-out);
+    }
+
+    .fm-window:not(.fm-window_select) .fm-tabbar__item_check[data-fm-action="done"] {
+        display: none;
+    }
+
+    .fm-tabbar__item_danger .fm-icon {
+        color: var(--fm-error-medium);
     }
 }

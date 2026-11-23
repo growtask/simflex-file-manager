@@ -30,6 +30,12 @@ const UPLOAD_ERRORS = {
     bad_image: 'картинка повреждена или с посторонним кодом',
 };
 
+/** Что можно сжать при загрузке (Manager::COMPRESSED_IMAGES, COMPRESSED_VIDEOS); аудио не сжимается */
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
+const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'ogv'];
+/** Запомненный ответ «сжимать или нет» — до конца работы (sessionStorage) */
+const COMPRESS_KEY = 'sf-file-manager-compress';
+
 const SORT_LABELS = {name: 'По названию', date: 'Дата изменения', size: 'Вес файла'};
 
 /** Расширения для MIME-типов в accept (как у <input type=file accept>) */
@@ -110,8 +116,9 @@ if (root && win) {
     const renameDialog = document.getElementById('sf-file-manager-rename');
     const createDialog = document.getElementById('sf-file-manager-create');
     const confirmDialog = document.getElementById('sf-file-manager-confirm');
+    const compressDialog = document.getElementById('sf-file-manager-compress');
     const toastsElement = root.querySelector('[data-fm-toasts]');
-    const dialogs = [win, renameDialog, createDialog, confirmDialog];
+    const dialogs = [win, renameDialog, createDialog, confirmDialog, compressDialog];
     const menus = {};
     win.querySelectorAll('[data-fm-menu]').forEach((menu) => {
         menus[menu.dataset.fmMenu] = menu;
@@ -131,6 +138,9 @@ if (root && win) {
         failed: [],
         uploading: [],
         multiple: false,
+        // режим отметки: включает галочка (Ctrl/⌘, Shift, пробел), дальше клик по карточке отмечает её; выход —
+        // «Отменить выбор», Esc или снятая последняя отметка
+        checking: false,
         // режим выбора: «Готово» отдаёт файлы
         select: false,
         // расширения, которые можно выбрать (parseAccept), null — любые
@@ -227,9 +237,14 @@ if (root && win) {
                 return;
             }
             event.preventDefault();
-            if (dialog === win && Object.values(menus).some((menu) => !menu.hidden)) {
+            if (dialog === win && Object.values(menus).some(isMenuOpen)) {
                 closeMenus();
                 sortButton.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            // в режиме отметки Esc сначала снимает отметки
+            if (dialog === win && state.checking) {
+                runAction('cancel-selection');
                 return;
             }
             hideDialog(dialog);
@@ -311,7 +326,7 @@ if (root && win) {
 
     const showTip = (target) => {
         if (target.getAttribute('aria-expanded') === 'true' || target.disabled
-            || Object.values(menus).some((menu) => !menu.hidden)) {
+            || Object.values(menus).some(isMenuOpen)) {
             return;
         }
         tipBox.querySelector('[data-fm-tip-text]').textContent = target.dataset.fmTip;
@@ -341,9 +356,21 @@ if (root && win) {
 
     /* ---------- меню ---------- */
 
+    /** Меню открыто (не закрывается) */
+    const isMenuOpen = (menu) => !menu.hidden && !menu.classList.contains('is-closing');
+
+    /** Закрыть меню плавно: гаснет 120 мс, потом hidden */
     const closeMenus = () => {
         Object.values(menus).forEach((menu) => {
-            menu.hidden = true;
+            if (!isMenuOpen(menu)) {
+                return;
+            }
+            menu.classList.add('is-closing');
+            clearTimeout(menu.closeTimer);
+            menu.closeTimer = setTimeout(() => {
+                menu.hidden = true;
+                menu.classList.remove('is-closing');
+            }, 120);
         });
         sortButton.setAttribute('aria-expanded', 'false');
     };
@@ -352,7 +379,8 @@ if (root && win) {
     const openMenu = (menu, x, y, {focus = true} = {}) => {
         closeMenus();
         hideTip();
-        menu.classList.remove('fm-pop_up');
+        clearTimeout(menu.closeTimer);
+        menu.classList.remove('fm-pop_up', 'is-closing');
         menu.hidden = false;
         const rect = menu.getBoundingClientRect();
         const left = Math.max(8, Math.min(x - 28, window.innerWidth - rect.width - 8));
@@ -371,7 +399,8 @@ if (root && win) {
 
     const openItemMenu = (item, x, y) => {
         state.target = item;
-        if (item.type === 'file' && !state.selected.has(item.path) && isAccepted(item)) {
+        // в режиме отметки меню не сбрасывает отмеченное
+        if (item.type === 'file' && !state.selected.has(item.path) && isAccepted(item) && !state.checking) {
             selectOnly(item.path);
         }
         openMenu(menus[item.type === 'dir' ? 'folder' : 'file'], x, y);
@@ -379,7 +408,7 @@ if (root && win) {
 
     // стрелки ходят по пунктам открытого меню
     win.addEventListener('keydown', (event) => {
-        const menu = Object.values(menus).find((item) => !item.hidden);
+        const menu = Object.values(menus).find(isMenuOpen);
         if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
             return;
         }
@@ -459,14 +488,23 @@ if (root && win) {
             row.append(toggle, icon('folder', 'fm-icon_16'), element('span', 'fm-tree-row__name', node.name));
             item.append(row);
             if (isOpen && node.data?.length) {
-                item.append(drawTree(node.data, depth + 1));
+                const group = drawTree(node.data, depth + 1);
+                // только что раскрытая ветка появляется плавно
+                if (node.path === state.justExpanded) {
+                    group.classList.add('fm-tree__group_in');
+                }
+                item.append(group);
             }
             list.append(item);
         });
         return list;
     };
 
-    const renderTree = () => treeElement.replaceChildren(drawTree(state.tree));
+    const renderTree = () => {
+        treeElement.replaceChildren(drawTree(state.tree));
+        // плавно — только в момент раскрытия, при следующих перерисовках ветка уже на месте
+        state.justExpanded = null;
+    };
 
     const findNode = (nodes, path) => {
         for (const node of nodes ?? []) {
@@ -635,7 +673,11 @@ if (root && win) {
     };
 
     const updateSelection = () => {
-        filesElement.classList.toggle('fm-files_multi', state.multiple || state.selected.size > 1);
+        if (!state.selected.size) {
+            state.checking = false;
+        }
+        filesElement.classList.toggle('fm-files_multi', state.checking);
+        windowBox.classList.toggle('fm-window_checking', state.checking);
         filesElement.querySelectorAll('.fm-card[data-fm-path]').forEach(applySelection);
         renderInfo();
     };
@@ -662,9 +704,12 @@ if (root && win) {
         const selected = state.items.filter((item) => state.selected.has(item.path));
         const name = find('[data-fm-info-name]');
         const meta = find('[data-fm-info-meta]');
-        if (selected.length > 1) {
+        if (selected.length > 1 || (state.checking && selected.length)) {
             name.textContent = `Выбрано: ${selected.length}`;
-            meta.textContent = '';
+            // окно открыто для одного файла (поле картинки): вставить можно только один
+            meta.textContent = state.select && !state.multiple && selected.filter((item) => item.type === 'file').length > 1
+                ? 'Для вставки выберите один файл'
+                : '';
         } else if (selected.length === 1) {
             const [item] = selected;
             name.textContent = item.name;
@@ -679,15 +724,17 @@ if (root && win) {
         }
         name.classList.toggle('fm-info__empty', !selected.length);
         const files = selected.filter((item) => item.type === 'file' && isAccepted(item));
-        const isDoneDisabled = !state.select || !files.length;
+        const isDoneDisabled = !state.select || !files.length || (!state.multiple && files.length > 1);
         win.querySelectorAll('[data-fm-action="done"]').forEach((button) => {
             button.disabled = isDoneDisabled;
         });
         find('[data-fm-delete-folder]').disabled = state.path === '';
     };
 
-    const renderFiles = () => {
+    /** @param {boolean} animate Карточки появляются мягко (после загрузки папки), а не при каждом выборе */
+    const renderFiles = (animate = false) => {
         const visible = state.loading ? [] : getVisibleItems();
+        filesElement.classList.toggle('fm-files_in', animate);
         filesElement.setAttribute('aria-multiselectable', 'true');
         filesElement.setAttribute('aria-busy', String(state.loading));
         filesElement.replaceChildren(
@@ -695,6 +742,9 @@ if (root && win) {
             ...state.failed.map((item) => drawCard(item, 'error')),
             ...visible.map((item) => drawCard(item, state.added.has(item.path) ? 'new' : 'default')),
         );
+        if (animate) {
+            [...filesElement.children].forEach((card, index) => card.style.setProperty('--i', String(index)));
+        }
         updateSelection();
         renderState(visible);
     };
@@ -732,13 +782,14 @@ if (root && win) {
         // выбор остаётся только у существующих
         const paths = new Set(items.map((item) => item.path));
         state.selected = new Set([...state.selected].filter((item) => paths.has(item)));
-        renderFiles();
+        renderFiles(!quiet);
     };
 
     const navigate = async (path) => {
         closeMenus();
         state.path = path;
         state.selected.clear();
+        state.checking = false;
         state.anchor = null;
         state.failed = [];
         searchInput.value = '';
@@ -767,6 +818,7 @@ if (root && win) {
     /* ---------- выбор ---------- */
 
     const selectOnly = (path) => {
+        state.checking = false;
         state.selected = new Set([path]);
         state.anchor = path;
         updateSelection();
@@ -778,6 +830,7 @@ if (root && win) {
         }
         state.selected.has(path) ? state.selected.delete(path) : state.selected.add(path);
         state.anchor = path;
+        state.checking = state.selected.size > 0;
         updateSelection();
     };
 
@@ -791,6 +844,7 @@ if (root && win) {
             return;
         }
         visible.slice(Math.min(from, to), Math.max(from, to) + 1).forEach((item) => state.selected.add(item));
+        state.checking = true;
         updateSelection();
     };
 
@@ -948,6 +1002,57 @@ if (root && win) {
         link.remove();
     };
 
+    /** Что сервер умеет сжимать: ['image', 'video'] (видео — если есть ffmpeg); спрашивается один раз */
+    let compression = null;
+    const getCompression = async () => {
+        compression ??= await call('compression').catch(() => []);
+        return compression;
+    };
+
+    /**
+     * Сжимать ли картинки и видео перед загрузкой: true / false, null — пользователь закрыл окно (не загружать).
+     * Нечего сжимать (документы, аудио, GIF) — false без вопроса. «Запомнить выбор» — до конца работы (sessionStorage)
+     */
+    const askCompress = async (files) => {
+        const kinds = await getCompression();
+        const images = kinds.includes('image') ? files.filter((file) => IMAGE_EXTENSIONS.includes(extensionOf(file.name))) : [];
+        const videos = kinds.includes('video') ? files.filter((file) => VIDEO_EXTENSIONS.includes(extensionOf(file.name))) : [];
+        if (!images.length && !videos.length) {
+            return false;
+        }
+        const remembered = sessionStorage.getItem(COMPRESS_KEY);
+        if (remembered !== null) {
+            return remembered === '1';
+        }
+        const list = compressDialog.querySelector('[data-fm-compress-list]');
+        list.replaceChildren(...[
+            images.length && `Картинки (${images.length}) — в WebP, не больше 2560 px. Обычно в несколько раз легче, на сайте выглядят так же.`,
+            videos.length && `Видео (${videos.length}) — в MP4, не больше 1920 px. Загрузка займёт больше времени.`,
+        ].filter(Boolean).map((text) => element('li', 'fm-compress__item', text)));
+        const remember = compressDialog.querySelector('[data-fm-compress-remember]');
+        remember.checked = false;
+        return new Promise((resolve) => {
+            let answer = null;
+            const onClick = (event) => {
+                const action = event.target.closest('[data-fm-action]')?.dataset.fmAction;
+                if (action === 'compress-yes' || action === 'compress-no') {
+                    answer = action === 'compress-yes';
+                    hideDialog(compressDialog);
+                }
+            };
+            compressDialog.addEventListener('click', onClick);
+            compressDialog.addEventListener('close', () => {
+                compressDialog.removeEventListener('click', onClick);
+                if (answer !== null && remember.checked) {
+                    sessionStorage.setItem(COMPRESS_KEY, answer ? '1' : '0');
+                }
+                resolve(answer);
+            }, {once: true});
+            showDialog(compressDialog);
+            compressDialog.querySelector('[data-fm-action="compress-yes"]').focus({preventScroll: true});
+        });
+    };
+
     /** Загрузка в папку path (по умолчанию — открытую; «Загрузить файлы» в меню папки — в неё) */
     const upload = async (chosen, path = state.path) => {
         if (path !== state.path) {
@@ -963,12 +1068,17 @@ if (root && win) {
         if (!files.length) {
             return;
         }
+        // картинки и видео — сжимать или нет, решает пользователь; закрыл окно вопроса — не загружаем
+        const compress = await askCompress(files);
+        if (compress === null) {
+            return;
+        }
         const names = files.map((file) => file.name);
         state.uploading.push(...names);
         renderFiles();
         let statuses = [];
         try {
-            statuses = await call('upload', {path}, files);
+            statuses = await call('upload', {path, compress: compress ? '1' : '0'}, files);
         } catch (error) {
             report(error);
         }
@@ -989,6 +1099,7 @@ if (root && win) {
         const uploaded = statuses.filter((status) => !UPLOAD_ERRORS[status]);
         if (uploaded.length) {
             state.selected = new Set(state.multiple ? uploaded : uploaded.slice(-1));
+            state.checking = state.selected.size > 1;
             state.anchor = uploaded[uploaded.length - 1];
             updateSelection();
         }
@@ -1015,6 +1126,23 @@ if (root && win) {
                 break;
             case 'refresh':
                 refresh();
+                break;
+            case 'select-item':
+                // «Выбрать» в меню (телефон): отметить и включить режим отметки
+                if (!state.selected.has(item.path) || !state.checking) {
+                    state.checking = true;
+                    state.selected.add(item.path);
+                    state.anchor = item.path;
+                    updateSelection();
+                }
+                break;
+            case 'delete-selected':
+                remove(selectedItems());
+                break;
+            case 'cancel-selection':
+                state.selected.clear();
+                state.checking = false;
+                updateSelection();
                 break;
             case 'back':
                 state.path === '' ? hideDialog(win) : navigate(parentPath(state.path));
@@ -1087,7 +1215,7 @@ if (root && win) {
             return;
         }
         if (event.target.closest('[data-fm-sort]')) {
-            const isOpen = !menus.sort.hidden;
+            const isOpen = isMenuOpen(menus.sort);
             closeMenus();
             if (!isOpen) {
                 const rect = sortButton.getBoundingClientRect();
@@ -1108,6 +1236,7 @@ if (root && win) {
             // стрелка — раскрыть или свернуть, название — открыть папку
             if (event.target.closest('[data-fm-toggle]')) {
                 state.expanded.has(path) ? state.expanded.delete(path) : state.expanded.add(path);
+                state.justExpanded = state.expanded.has(path) ? path : null;
                 renderTree();
                 loadMissingLevels().catch(report);
             } else {
@@ -1125,16 +1254,17 @@ if (root && win) {
             return;
         }
         const path = card.dataset.fmPath;
-        // галочка и Ctrl/⌘ — отметить; Shift — диапазон; папка — открыть; файл — выбрать
+        // галочка и Ctrl/⌘ — отметить (включает режим отметки); Shift — диапазон; в режиме отметки клик по карточке
+        // отмечает её; иначе папка — открыть, файл — выбрать один
         if (event.target.closest('.fm-card__check') || event.ctrlKey || event.metaKey) {
             toggleSelect(path);
         } else if (event.shiftKey && state.anchor) {
             selectRange(path);
+        } else if (state.checking) {
+            toggleSelect(path);
         } else if (card.dataset.fmKind === 'dir') {
             navigate(path);
             return;
-        } else if (state.multiple) {
-            toggleSelect(path);
         } else {
             selectOnly(path);
         }
@@ -1143,7 +1273,8 @@ if (root && win) {
 
     win.addEventListener('dblclick', (event) => {
         const card = event.target.closest('.fm-card[data-fm-path][data-fm-kind="file"]');
-        if (card && !event.target.closest('.fm-card__check')) {
+        // в режиме отметки двойной клик — две отметки, а не «Готово»
+        if (card && !event.target.closest('.fm-card__check') && !state.checking) {
             pick(card.dataset.fmPath);
         }
     });
@@ -1326,7 +1457,7 @@ if (root && win) {
     win.addEventListener('close', () => {
         closeMenus();
         hideTip();
-        [renameDialog, createDialog, confirmDialog].forEach(hideDialog);
+        [renameDialog, createDialog, confirmDialog, compressDialog].forEach(hideDialog);
         state.added.clear();
         state.failed = [];
         const files = state.result;
@@ -1352,6 +1483,8 @@ if (root && win) {
         fileInput.accept = state.accept ? [...state.accept].map((extension) => '.' + extension).join(',') : '';
         state.selected.clear();
         windowBox.classList.toggle('fm-window_select', select);
+        // что сервер умеет сжимать — заранее: вопрос о сжатии при загрузке появляется сразу
+        getCompression();
         const isOpen = win.open;
         showDialog(win);
         if (!state.loaded) {

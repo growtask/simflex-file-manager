@@ -26,8 +26,17 @@ class Manager
         'woff', 'woff2', 'ttf', 'otf', 'eot',
     ];
 
-    /** Картинки, которые при загрузке сжимаются в WebP (как в редакторе texted): JPEG, PNG, WebP */
+    /** Картинки, которые при загрузке можно сжать в WebP (как в редакторе texted): JPEG, PNG, WebP */
     public const COMPRESSED_IMAGES = ['jpg', 'jpeg', 'png', 'webp'];
+
+    /** Видео, которые при загрузке можно сжать в MP4 (H.264) через ffmpeg; аудио не сжимается */
+    public const COMPRESSED_VIDEOS = ['mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'ogv'];
+
+    /** Большая сторона видео после сжатия, px */
+    public const VIDEO_MAX_SIDE = 1920;
+
+    /** Качество видео: CRF x264 (меньше — лучше и тяжелее; 23 — по умолчанию ffmpeg) */
+    public const VIDEO_CRF = 28;
 
     /** Картинки, которые сохраняются как есть: проверяются на посторонний код (файл — и картинка, и страница) */
     public const RAW_IMAGES = ['gif', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic'];
@@ -48,7 +57,11 @@ class Manager
     protected const EXECUTABLE_NAME_PART = '/^(php\d*|pht|phtml|phar|phps|cgi|pl|py|asp|aspx|jsp|sh|shtml)$/i';
 
     /** Методы, доступные через параметр запроса method */
-    protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'delete', 'createDir', 'rename', 'upload'];
+    protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'compression', 'delete', 'createDir',
+        'rename', 'upload'];
+
+    /** @var string|false|null Путь к ffmpeg: null — ещё не искали, false — нет */
+    protected static string|false|null $ffmpeg = null;
 
     /** Методы API, которые меняют файлы */
     protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'upload'];
@@ -550,9 +563,11 @@ class Manager
     }
 
     /**
-     * Handle uploaded files: имя - латиницей (как в редакторе texted), занятое не перезаписывается (photo-2.webp),
-     * JPEG, PNG и WebP сжимаются в WebP до IMAGE_MAX_SIDE. Статус каждого файла - путь сохранённого файла от корня
-     * или код ошибки: error, forbidden, error_save, too_large, bad_image
+     * Handle uploaded files: имя - латиницей (как в редакторе texted), занятое не перезаписывается (photo-2.webp).
+     * Сжатие — только если пользователь согласился (compress=1): JPEG, PNG и WebP — в WebP до IMAGE_MAX_SIDE,
+     * видео — в MP4 до VIDEO_MAX_SIDE (нужен ffmpeg); сжатый файл остаётся, только если он легче или уменьшен.
+     * Статус каждого файла - путь сохранённого файла от корня или код ошибки: error, forbidden, error_save,
+     * too_large, bad_image
      * @return array|string[]
      */
     protected function upload(): array
@@ -571,9 +586,10 @@ class Manager
             throw ApiException::badRequest('Файлы не выбраны');
         }
 
+        $compress = (string)($_REQUEST['compress'] ?? '0') === '1';
         $fileStatus = [];
         foreach ($this->fixFilesArray() as $file) {
-            $fileStatus[] = $this->storeUploaded($file, $path);
+            $fileStatus[] = $this->storeUploaded($file, $path, $compress);
         }
 
         return $fileStatus;
@@ -584,7 +600,7 @@ class Manager
      * @param array{name?: string, tmp_name?: string, error?: int} $file
      * @return string Путь от корня или код ошибки
      */
-    protected function storeUploaded(array $file, string $dir): string
+    protected function storeUploaded(array $file, string $dir, bool $compress = false): string
     {
         $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
         if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
@@ -602,7 +618,6 @@ class Manager
         }
 
         $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-        $isCompressed = in_array($extension, static::COMPRESSED_IMAGES, true) && static::canWriteWebp();
         if (in_array($extension, static::RAW_IMAGES, true) && static::hasCode($tmp)) {
             return 'bad_image';
         }
@@ -610,14 +625,16 @@ class Manager
         $target = null;
         $staged = @tempnam($dir, '.fm-');
         try {
-            if ($staged === false) {
+            if ($staged === false || !move_uploaded_file($tmp, $staged)) {
                 return 'error_save';
             }
-            if ($isCompressed) {
-                static::writeWebp($tmp, $staged);
-                $extension = 'webp';
-            } elseif (!move_uploaded_file($tmp, $staged)) {
-                return 'error_save';
+            // сжатие — только с согласия пользователя (окно спрашивает перед загрузкой)
+            if ($compress) {
+                $compressed = $this->compress($staged, $extension, $dir);
+                if ($compressed !== false) {
+                    [$compressedFile, $extension] = $compressed;
+                    rename($compressedFile, $staged);
+                }
             }
             @chmod($staged, 0644);
 
@@ -644,6 +661,109 @@ class Manager
                 @unlink($target);
             }
         }
+    }
+
+    /**
+     * Какое сжатие доступно на сервере: 'image' (GD с WebP), 'video' (есть ffmpeg). Окно спрашивает о сжатии только
+     * того, что можно сжать
+     * @return string[]
+     */
+    protected function compression(): array
+    {
+        return array_values(array_filter([
+            static::canWriteWebp() ? 'image' : null,
+            static::findFfmpeg() ? 'video' : null,
+        ]));
+    }
+
+    /**
+     * Сжатая копия файла рядом с ним: [путь, расширение] — только если она легче исходного или картинка уменьшена;
+     * false — сжимать нечего, нельзя или не стоит (остаётся исходный)
+     * @return array{0: string, 1: string}|false
+     * @throws \InvalidArgumentException картинка повреждена или слишком большая
+     */
+    protected function compress(string $source, string $extension, string $dir): array|false
+    {
+        $isImage = in_array($extension, static::COMPRESSED_IMAGES, true) && static::canWriteWebp();
+        $isVideo = in_array($extension, static::COMPRESSED_VIDEOS, true) && static::findFfmpeg();
+        if (!$isImage && !$isVideo) {
+            return false;
+        }
+
+        $out = @tempnam($dir, '.fm-');
+        if ($out === false) {
+            return false;
+        }
+        try {
+            $isResized = false;
+            if ($isImage) {
+                $before = @getimagesize($source);
+                $size = static::writeWebp($source, $out);
+                $isResized = $before && max($size['width'], $size['height']) < max($before[0], $before[1]);
+                $result = [$out, 'webp'];
+            } elseif (static::writeMp4($source, $out)) {
+                $result = [$out, 'mp4'];
+            } else {
+                @unlink($out);
+                return false;
+            }
+            // сжатый не легче исходного (файл уже был сжат) — остаётся исходный
+            if (!$isResized && filesize($out) >= filesize($source)) {
+                @unlink($out);
+                return false;
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            @unlink($out);
+            throw $e;
+        }
+    }
+
+    /** ffmpeg на сервере: FM_FFMPEG или ffmpeg в PATH; false — нет */
+    public static function findFfmpeg(): string|false
+    {
+        if (static::$ffmpeg !== null) {
+            return static::$ffmpeg;
+        }
+        static::$ffmpeg = false;
+        if (!function_exists('exec')) {
+            return false;
+        }
+        foreach (array_filter([getenv('FM_FFMPEG') ?: null, 'ffmpeg']) as $bin) {
+            $output = [];
+            $code = 1;
+            @exec(escapeshellarg($bin) . ' -version 2>&1', $output, $code);
+            if ($code === 0) {
+                return static::$ffmpeg = $bin;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Сжимает видео в MP4: H.264 (CRF VIDEO_CRF), звук AAC 128 кбит/с, большая сторона — не больше VIDEO_MAX_SIDE,
+     * быстрый старт в браузере (faststart). Логика — как конвертация видео в редакторе texted (ffmpeg)
+     */
+    public static function writeMp4(string $source, string $destination): bool
+    {
+        $ffmpeg = static::findFfmpeg();
+        if (!$ffmpeg) {
+            return false;
+        }
+        $side = (int)static::VIDEO_MAX_SIDE;
+        $scale = "scale='if(gt(iw,ih),min($side,iw),-2)':'if(gt(iw,ih),-2,min($side,ih))'";
+        $command = escapeshellarg($ffmpeg) . ' -y -v error -i ' . escapeshellarg($source)
+            . ' -vf ' . escapeshellarg($scale)
+            . ' -c:v libx264 -preset veryfast -crf ' . (int)static::VIDEO_CRF . ' -pix_fmt yuv420p'
+            . ' -c:a aac -b:a 128k -movflags +faststart -f mp4 ' . escapeshellarg($destination) . ' 2>&1';
+        @set_time_limit(0);
+        $output = [];
+        $code = 1;
+        exec($command, $output, $code);
+
+        return $code === 0 && is_file($destination) && filesize($destination) > 0;
     }
 
     /** GD умеет писать WebP: иначе картинки сохраняются как есть */

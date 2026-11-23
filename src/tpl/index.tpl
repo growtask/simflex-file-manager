@@ -29,8 +29,9 @@ $item = fn(string $name, string $label, string $action, string $class = '') => '
     . ($class ? ' ' . $class : '') . '" role="menuitem" data-fm-action="' . $action . '">' . $icon($name)
     . '<span class="fm-item__label">' . $e($label) . '</span></button>';
 /** Пункт нижней панели телефона */
-$tab = fn(string $name, string $label, string $action) => '<button type="button" class="fm-tabbar__item"'
-    . ' data-fm-action="' . $action . '">' . $icon($name) . '<span>' . $e($label) . '</span></button>';
+$tab = fn(string $name, string $label, string $action, string $class = '') => '<button type="button"'
+    . ' class="fm-tabbar__item' . ($class ? ' ' . $class : '') . '" data-fm-action="' . $action . '">' . $icon($name)
+    . '<span>' . $e($label) . '</span></button>';
 /** Поле form-input: название, поле, подсказка */
 $field = fn(string $label, string $placeholder, string $hint, string $attributes) => '<label class="fm-field">'
     . '<span class="fm-field__label">' . $e($label) . '</span>'
@@ -76,6 +77,9 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                         <?= $tool('folder-plus', 'Создать папку', 'create') ?>
                         <?= $tool('refresh', 'Обновить', 'refresh') ?>
                         <?= $tool('folder-x', 'Удалить папку', 'delete-folder', ' data-fm-delete-folder') ?>
+                        <?php /* режим отметки: вместо кнопок папки — выход из него */ ?>
+                        <button type="button" class="fm-button fm-button_gray fm-tools__cancel"
+                                data-fm-action="cancel-selection"><?= $icon('close') ?>Отменить выбор</button>
                     </div>
                 </aside>
                 <div class="fm-main">
@@ -113,11 +117,17 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 <?= $tab('folder-plus', 'Создать', 'create') ?>
                 <?= $tab('refresh', 'Обновить', 'refresh') ?>
                 <?= $tab('check', 'Готово', 'done') ?>
+                <?php /* режим отметки: «Отменить выбор», «Удалить» отмеченное, «Готово» */ ?>
+                <?= $tab('close', 'Отменить', 'cancel-selection', 'fm-tabbar__item_check') ?>
+                <?= $tab('trash', 'Удалить', 'delete-selected', 'fm-tabbar__item_check fm-tabbar__item_danger') ?>
+                <?= $tab('check', 'Готово', 'done', 'fm-tabbar__item_check') ?>
             </div>
         </div>
         <input class="fm-input" type="file" multiple hidden data-fm-input>
         <div class="fm-pop" role="menu" data-fm-menu="file" hidden><span class="fm-pop__corner"></span>
             <div class="fm-pop__box">
+                <?php /* телефон и планшет: наведения нет — режим отметки отсюда */ ?>
+                <?= $item('check', 'Выбрать', 'select-item', 'fm-item_touch') ?>
                 <?= $item('download', 'Скачать', 'download') ?>
                 <?= $item('edit', 'Переименовать', 'rename') ?>
                 <?= $item('link', 'Копировать путь', 'copy-path') ?>
@@ -127,6 +137,7 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
         </div>
         <div class="fm-pop" role="menu" data-fm-menu="folder" hidden><span class="fm-pop__corner"></span>
             <div class="fm-pop__box">
+                <?= $item('check', 'Выбрать', 'select-item', 'fm-item_touch') ?>
                 <?= $item('folder-plus', 'Создать папку', 'create') ?>
                 <?= $item('upload', 'Загрузить файлы', 'upload-to') ?>
                 <?= $item('edit', 'Переименовать', 'rename') ?>
@@ -167,6 +178,26 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
         'create-save',
     ) ?>
     <?= $modal('sf-file-manager-confirm', 'Удалить файл?', 'Файл будет удалён сразу.', '', 'Отмена', 'Удалить', 'confirm-yes') ?>
+    <?php /* вопрос перед загрузкой: сжимать картинки и видео или загрузить как есть (аудио не сжимается) */ ?>
+    <dialog id="sf-file-manager-compress" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="<?= $theme ?>"
+            aria-labelledby="sf-file-manager-compress-title">
+        <div class="fm-modal fm-dialog__box">
+            <button type="button" class="fm-modal__close" data-fm-close aria-label="Не загружать"><?= $icon('close') ?></button>
+            <div class="fm-modal__box">
+                <div class="fm-modal__head">
+                    <h2 class="fm-modal__title" id="sf-file-manager-compress-title">Сжать перед загрузкой?</h2>
+                    <p class="fm-modal__text">Сжатые файлы легче: страницы сайта открываются быстрее.</p>
+                </div>
+                <ul class="fm-compress" data-fm-compress-list></ul>
+                <label class="fm-check"><input type="checkbox" class="fm-check__input" data-fm-compress-remember>
+                    <span>Запомнить выбор до конца работы</span></label>
+                <div class="fm-modal__footer">
+                    <button type="button" class="fm-button fm-button_gray fm-button_l" data-fm-action="compress-no">Как есть</button>
+                    <button type="button" class="fm-button fm-button_primary fm-button_l" data-fm-action="compress-yes">Сжать</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
     <div class="fm-root fm-toasts" popover="manual" role="status" aria-live="polite" data-fm-theme="<?= $theme ?>"
          data-fm-toasts></div>
 </div>
