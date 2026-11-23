@@ -1,60 +1,128 @@
 /**
- * Файловый менеджер (ES-модуль, без jQuery): окно file-window из tpl/index.tpl, данные — API Manager
- * (data-fm-api: ?method=getTree|getFileList|download|delete|createDir|rename|upload).
+ * Файловый менеджер Simflex (ES-модуль, без зависимостей): окна из tpl/index.tpl, данные — API Manager
+ * (data-fm-api: ?method=getTree|getFileList|download|delete|createDir|rename|upload). Интерфейс свой, независимый
+ * от админки (как редактор texted): окна — <dialog> (верхний слой: открытое последним всегда сверху), свои меню,
+ * подсказка, подтверждение и тосты.
  *
- * Открытие: window.fileManager.open({multiple, onSelect}) — onSelect получает выбранные файлы
- * [{path, url, name, isImage}] (path — от корня файлов, url — с корнем, например /uf/images/a.png);
+ * Открытие: window.fileManager.open({multiple, accept, onSelect, onCancel, select}) — окно выбора файлов.
+ * Выбранные файлы [{path, url, name, isImage}] (path — от корня файлов, url — с корнем, например /uf/images/a.png)
+ * получает onSelect по «Готово»; закрытие без выбора (крестик, Esc, подложка, close(), новый open()) — onCancel.
+ * На одно открытие — ровно один ответ. open() возвращает Promise: файлы по «Готово», null при отмене.
+ * Режим выбора («Готово» доступно) — при onSelect или select: true; без них окно только для работы с файлами.
+ * accept — какие файлы можно выбрать: массив расширений (['jpg', 'png']) или строка как у <input type=file accept>
+ * ('image/*,.pdf'); остальные файлы видны, но неактивны, загрузить через окно можно только подходящие.
  * window.fileManager.init(callback) — прежний вызов (плагин TinyMCE fm): callback(path) одного файла.
  *
- * Окно: дерево папок, крошки, поиск и сортировка, выбор файла (Ctrl/⌘ или режим multiple — несколько),
- * двойной клик — открыть папку или выбрать файл, правый клик или долгое нажатие — меню, перетаскивание файлов
- * в окно — загрузка. Подтверждение удаления, тосты — window.sfAdmin (admin.js ядра), окна — Common/Modal.
+ * Работа в окне: клик по папке открывает её, по файлу — выбирает; несколько файлов и папки отмечаются галочкой
+ * в углу карточки (видна при наведении), Ctrl/⌘+клик и Shift+клик; двойной клик или Enter по файлу — «Готово».
+ * Правый клик или долгое нажатие — меню; перетаскивание файлов в окно — загрузка; Delete — удалить выбранное.
  */
 
-const MODAL_ID = 'sf-file-manager';
+const WINDOW_ID = 'sf-file-manager';
 const LONG_PRESS = 500;
+const MOBILE = '(max-width: 811px)';
 
 const UPLOAD_ERRORS = {
     error: 'не загружен',
     forbidden: 'такой тип файла нельзя загрузить',
     error_save: 'не сохранён',
+    too_large: 'слишком большой',
+    bad_image: 'картинка повреждена или с посторонним кодом',
 };
 
-const root = document.querySelector('.file-manager');
-const modal = document.getElementById(MODAL_ID);
+/** Что можно сжать при загрузке (Manager::COMPRESSED_IMAGES, COMPRESSED_VIDEOS); аудио не сжимается */
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
+const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'ogv'];
+/** Запомненный ответ «сжимать или нет» — до конца работы (sessionStorage) */
+const COMPRESS_KEY = 'sf-file-manager-compress';
 
-const toast = (message, type = 'success') => (window.sfAdmin
-    ? window.sfAdmin.toast(message, {type})
-    : window.alert(message));
-const confirmAction = (message, title, confirmText) => window.sfAdmin
-    ? window.sfAdmin.confirm(message, {title, confirmText, danger: true})
-    : Promise.resolve(window.confirm(message));
+const SORT_LABELS = {name: 'По названию', date: 'Дата изменения', size: 'Вес файла'};
 
+/** Расширения для MIME-типов в accept (как у <input type=file accept>) */
+const MIME_EXTENSIONS = {
+    'image/*': ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic', 'svg'],
+    'video/*': ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg', 'mpeg', '3gp'],
+    'audio/*': ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac'],
+    'image/jpeg': ['jpg', 'jpeg'],
+    'image/png': ['png'],
+    'image/gif': ['gif'],
+    'image/webp': ['webp'],
+    'image/avif': ['avif'],
+    'image/svg+xml': ['svg'],
+    'video/mp4': ['mp4', 'm4v'],
+    'video/webm': ['webm'],
+    'audio/mpeg': ['mp3'],
+    'audio/wav': ['wav'],
+    'application/pdf': ['pdf'],
+};
+
+/**
+ * accept → множество расширений в нижнем регистре; null — подходит любой файл (accept не задан, '*' или '*\/*')
+ * @param {string|string[]|null|undefined} accept
+ * @returns {Set<string>|null}
+ */
+const parseAccept = (accept) => {
+    if (accept === null || accept === undefined || accept === '') {
+        return null;
+    }
+    const parts = (Array.isArray(accept) ? accept : String(accept).split(','))
+        .map((part) => String(part).trim().toLowerCase())
+        .filter(Boolean);
+    if (!parts.length || parts.some((part) => part === '*' || part === '*/*')) {
+        return null;
+    }
+    const extensions = new Set();
+    parts.forEach((part) => (part.includes('/') ? MIME_EXTENSIONS[part] ?? [] : [part.replace(/^\./, '')])
+        .forEach((extension) => extensions.add(extension)));
+    return extensions;
+};
+
+/** Расширение имени в нижнем регистре: photo.JPG → jpg, без точки — пусто */
+const extensionOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
 /** Последний элемент пути: /images/a.png → a.png */
 const baseName = (path) => path.split('/').filter(Boolean).pop() ?? '';
 /** Папка пути: /images/a.png → /images */
 const parentPath = (path) => path.split('/').slice(0, -1).join('/');
 
-if (root && modal) {
+/** Форма слова для числа: 1 элемент, 2 элемента, 5 элементов */
+const plural = (count, forms) => {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) {
+        return forms[0];
+    }
+    return mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? forms[1] : forms[2];
+};
+
+const root = document.querySelector('.file-manager');
+const win = document.getElementById(WINDOW_ID);
+
+if (root && win) {
     const api = root.dataset.fmApi;
     const filesRoot = root.dataset.fmRoot;
     const sprite = root.dataset.fmSprite;
-    const dialog = modal.querySelector('.modal__dialog');
-    const find = (selector) => modal.querySelector(selector);
+    const find = (selector) => win.querySelector(selector);
+    const windowBox = find('.fm-window');
     const treeElement = find('[data-fm-tree]');
     const filesElement = find('[data-fm-files]');
+    const boardElement = find('[data-fm-board]');
+    const crumbsElement = find('[data-fm-crumbs]');
+    const homeButton = find('.fm-crumbs__home');
     const searchInput = find('[data-fm-search]');
-    const sortInput = find('[data-fm-sort]');
-    const doneButton = find('.file-window__done');
+    const sortButton = find('[data-fm-sort]');
     const fileInput = find('[data-fm-input]');
     const dropElement = find('[data-fm-drop]');
-    const renameModal = document.getElementById('sf-file-manager-rename');
-    const createModal = document.getElementById('sf-file-manager-create');
-    // меню — внутри окна: всё вне открытого окна недоступно (inert)
+    const tipBox = find('[data-fm-tip-box]');
+    const renameDialog = document.getElementById('sf-file-manager-rename');
+    const createDialog = document.getElementById('sf-file-manager-create');
+    const confirmDialog = document.getElementById('sf-file-manager-confirm');
+    const compressDialog = document.getElementById('sf-file-manager-compress');
+    const moveDialog = document.getElementById('sf-file-manager-move');
+    const toastsElement = root.querySelector('[data-fm-toasts]');
+    const dialogs = [win, renameDialog, createDialog, confirmDialog, compressDialog, moveDialog];
     const menus = {};
-    root.querySelectorAll('[data-fm-menu]').forEach((menu) => {
+    win.querySelectorAll('[data-fm-menu]').forEach((menu) => {
         menus[menu.dataset.fmMenu] = menu;
-        dialog.append(menu);
     });
 
     const state = {
@@ -63,20 +131,40 @@ if (root && modal) {
         expanded: new Set(),
         items: [],
         selected: new Set(),
+        // от какого файла выделяется диапазон (Shift+клик)
+        anchor: null,
+        sort: 'name',
         // только что загруженные (style new) и не принятые сервером (style error) файлы
         added: new Set(),
         failed: [],
         uploading: [],
         multiple: false,
-        onSelect: null,
-        // элемент, для которого открыто меню или окно переименования
+        // режим отметки: включает галочка (Ctrl/⌘, Shift, пробел), дальше клик по карточке отмечает её; выход —
+        // «Отменить выбор», Esc или снятая последняя отметка
+        checking: false,
+        // режим выбора: «Готово» отдаёт файлы
+        select: false,
+        // расширения, которые можно выбрать (parseAccept), null — любые
+        accept: null,
+        // файлы, выбранные «Готово»: отдаются вызвавшему при закрытии окна
+        result: null,
+        // элемент, для которого открыто меню или окно имени
         target: null,
         loaded: false,
+        // папка списка загружается
+        loading: false,
+        // номер последнего запроса дерева и отмена запроса списка (устаревшие ответы не применяются)
+        treeRequest: 0,
+        filesAbort: null,
+        // папка для «Загрузить файлы» из меню папки (пока открыт выбор файлов)
+        uploadPath: null,
     };
 
-    const icon = (name, className = 'fm-icon') => {
+    /* ---------- разметка ---------- */
+
+    const icon = (name, className = '') => {
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('class', className);
+        svg.setAttribute('class', `fm-icon${className ? ' ' + className : ''}`);
         svg.setAttribute('aria-hidden', 'true');
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
         use.setAttribute('href', `${sprite}#fm-${name}`);
@@ -84,23 +172,274 @@ if (root && modal) {
         return svg;
     };
 
-    const element = (tag, className, text = '') => {
+    const element = (tag, className = '', text = '') => {
         const node = document.createElement(tag);
-        node.className = className;
+        if (className) {
+            node.className = className;
+        }
         if (text !== '') {
             node.textContent = text;
         }
         return node;
     };
 
-    /** Запрос к API: изменяющие — POST */
-    const call = async (method, params = {}, files = null) => {
-        const isModifying = ['delete', 'createDir', 'rename', 'upload'].includes(method);
+    /** Можно ли выбрать: папка — всегда, файл — если подходит под accept */
+    const isAccepted = (item) => item.type === 'dir' || !state.accept || state.accept.has(extensionOf(item.name));
+
+    const getItem = (path) => state.items.find((item) => item.path === path)
+        ?? {type: 'dir', path, name: baseName(path)};
+
+    /* ---------- окна (<dialog>) ---------- */
+
+    /**
+     * Открывает окно поверх всех (верхний слой браузера). Окно админки (Common/Modal) делает остальную страницу
+     * недоступной (inert) — вместе с менеджером, поэтому на время своих окон контейнер это снимает
+     */
+    const showDialog = (dialog) => {
+        if (root.hasAttribute('inert')) {
+            root.removeAttribute('inert');
+            root.dataset.fmInert = '';
+        }
+        if (!dialog.open) {
+            dialog.showModal();
+        }
+        dialog.classList.add('is-open');
+    };
+
+    const hideDialog = (dialog) => {
+        if (dialog.open) {
+            dialog.close();
+        }
+    };
+
+    dialogs.forEach((dialog) => {
+        dialog.addEventListener('close', () => {
+            dialog.classList.remove('is-open');
+            // все окна менеджера закрыты, а окно админки ещё открыто — контейнер снова недоступен, как был
+            if (!dialogs.some((item) => item.open) && root.dataset.fmInert !== undefined) {
+                delete root.dataset.fmInert;
+                if (document.documentElement.classList.contains('modal-open')) {
+                    root.setAttribute('inert', '');
+                }
+            }
+        });
+        // клик по подложке (вне карточки окна) и крестик — закрыть
+        dialog.addEventListener('click', (event) => {
+            if (event.target === dialog || event.target.closest('[data-fm-close]')) {
+                hideDialog(dialog);
+            }
+        });
+        // клавиши окна не доходят до страницы: Esc и Tab окна админки под менеджером не срабатывают.
+        // Esc закрывает только это окно (в окне менеджера сначала меню): браузер иначе может закрыть
+        // по одному Esc сразу несколько окон, открытых без нажатия пользователя
+        dialog.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key !== 'Escape' || event.defaultPrevented) {
+                return;
+            }
+            event.preventDefault();
+            if (dialog === win && Object.values(menus).some(isMenuOpen)) {
+                closeMenus();
+                sortButton.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            // в режиме отметки Esc сначала снимает отметки
+            if (dialog === win && state.checking) {
+                runAction('cancel-selection');
+                return;
+            }
+            hideDialog(dialog);
+        });
+        // прочие запросы закрытия (жест «назад» на телефоне) — тоже только это окно
+        dialog.addEventListener('cancel', (event) => {
+            event.preventDefault();
+            hideDialog(dialog);
+        });
+    });
+
+    // экранная клавиатура телефона закрывает низ экрана: шторка окна поднимается над ней (--fm-keyboard)
+    const keyboardOffset = () => {
+        const viewport = window.visualViewport;
+        const height = viewport ? Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)) : 0;
+        dialogs.forEach((dialog) => dialog.style.setProperty('--fm-keyboard', `${height}px`));
+    };
+    window.visualViewport?.addEventListener('resize', keyboardOffset);
+    window.visualViewport?.addEventListener('scroll', keyboardOffset);
+
+    /** Подтверждение (Figma file-modal delfile, delfolder): Promise<boolean> */
+    const confirmAction = (title, text, yesText = 'Удалить') => new Promise((resolve) => {
+        confirmDialog.querySelector('[data-fm-title]').textContent = title;
+        confirmDialog.querySelector('[data-fm-text]').textContent = text;
+        const yes = confirmDialog.querySelector('[data-fm-action="confirm-yes"]');
+        yes.textContent = yesText;
+        let answer = false;
+        const onYes = () => {
+            answer = true;
+            hideDialog(confirmDialog);
+        };
+        yes.addEventListener('click', onYes, {once: true});
+        confirmDialog.addEventListener('close', () => {
+            yes.removeEventListener('click', onYes);
+            resolve(answer);
+        }, {once: true});
+        showDialog(confirmDialog);
+        yes.focus({preventScroll: true});
+    });
+
+    /* ---------- тосты ---------- */
+
+    const toast = (message, type = 'success') => {
+        if (!toastsElement.showPopover) {
+            window.alert(message);
+            return;
+        }
+        // поверх всех открытых окон: показанный последним слой — верхний
+        if (toastsElement.matches(':popover-open')) {
+            toastsElement.hidePopover();
+        }
+        toastsElement.showPopover();
+        // success — зелёный, error — красный, info — тёмный (Figma Feedback/toast)
+        const item = element('div', `fm-toast fm-toast_${type}`, message);
+        toastsElement.append(item);
+        while (toastsElement.children.length > 3) {
+            toastsElement.firstElementChild.remove();
+        }
+        setTimeout(() => {
+            item.classList.add('is-closing');
+            setTimeout(() => {
+                item.remove();
+                if (!toastsElement.children.length && toastsElement.matches(':popover-open')) {
+                    toastsElement.hidePopover();
+                }
+            }, 160);
+        }, type === 'error' ? 5000 : 3000);
+    };
+
+    const report = (error) => {
+        if (error?.name !== 'AbortError') {
+            toast(error?.message || 'Ошибка', 'error');
+        }
+    };
+
+    /* ---------- подсказка ---------- */
+
+    const hideTip = () => tipBox.classList.remove('is-visible');
+
+    const showTip = (target) => {
+        if (target.getAttribute('aria-expanded') === 'true' || target.disabled
+            || Object.values(menus).some(isMenuOpen)) {
+            return;
+        }
+        tipBox.querySelector('[data-fm-tip-text]').textContent = target.dataset.fmTip;
+        const rect = target.getBoundingClientRect();
+        const tip = tipBox.getBoundingClientRect();
+        const left = Math.max(8, Math.min(rect.left + rect.width / 2 - tip.width / 2, window.innerWidth - tip.width - 8));
+        tipBox.style.left = `${left}px`;
+        tipBox.style.top = `${rect.bottom + 4}px`;
+        tipBox.style.setProperty('--corner-x', `${rect.left + rect.width / 2 - left - 4}px`);
+        tipBox.classList.add('is-visible');
+    };
+
+    win.addEventListener('mouseover', (event) => {
+        const target = event.target.closest('[data-fm-tip]');
+        if (target && !target.contains(event.relatedTarget)) {
+            showTip(target);
+        }
+    });
+    win.addEventListener('mouseout', (event) => {
+        const target = event.target.closest('[data-fm-tip]');
+        if (target && !target.contains(event.relatedTarget)) {
+            hideTip();
+        }
+    });
+    // нажатие прячет подсказку сразу (не висит после клика)
+    win.addEventListener('mousedown', hideTip, true);
+
+    /* ---------- меню ---------- */
+
+    /** Меню открыто (не закрывается) */
+    const isMenuOpen = (menu) => !menu.hidden && !menu.classList.contains('is-closing');
+
+    /** Закрыть меню плавно: гаснет 120 мс, потом hidden */
+    const closeMenus = () => {
+        Object.values(menus).forEach((menu) => {
+            if (!isMenuOpen(menu)) {
+                return;
+            }
+            menu.classList.add('is-closing');
+            clearTimeout(menu.closeTimer);
+            menu.closeTimer = setTimeout(() => {
+                menu.hidden = true;
+                menu.classList.remove('is-closing');
+            }, 120);
+        });
+        sortButton.setAttribute('aria-expanded', 'false');
+    };
+
+    /** Меню у точки (x, y): под ней, уголок на x; не помещается снизу — над ней */
+    const openMenu = (menu, x, y, {focus = true} = {}) => {
+        closeMenus();
+        hideTip();
+        clearTimeout(menu.closeTimer);
+        menu.classList.remove('fm-pop_up', 'is-closing');
+        menu.hidden = false;
+        const rect = menu.getBoundingClientRect();
+        const left = Math.max(8, Math.min(x - 28, window.innerWidth - rect.width - 8));
+        let top = y + 4;
+        if (top + rect.height > window.innerHeight - 8) {
+            top = Math.max(8, y - rect.height - 4);
+            menu.classList.add('fm-pop_up');
+        }
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+        menu.style.setProperty('--corner-x', `${Math.max(16, Math.min(x - left - 4, rect.width - 24))}px`);
+        if (focus) {
+            (menu.querySelector('[aria-checked="true"]') ?? menu.querySelector('.fm-item'))?.focus({preventScroll: true});
+        }
+    };
+
+    const openItemMenu = (item, x, y) => {
+        state.target = item;
+        // в режиме отметки меню не сбрасывает отмеченное
+        if (item.type === 'file' && !state.selected.has(item.path) && isAccepted(item) && !state.checking) {
+            selectOnly(item.path);
+        }
+        openMenu(menus[item.type === 'dir' ? 'folder' : 'file'], x, y);
+    };
+
+    // стрелки ходят по пунктам открытого меню
+    win.addEventListener('keydown', (event) => {
+        const menu = Object.values(menus).find(isMenuOpen);
+        if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            return;
+        }
+        event.preventDefault();
+        const items = [...menu.querySelectorAll('.fm-item')];
+        const index = items.indexOf(document.activeElement);
+        const next = {
+            ArrowDown: (index + 1) % items.length,
+            ArrowUp: (index - 1 + items.length) % items.length,
+            Home: 0,
+            End: items.length - 1,
+        }[event.key];
+        items[next]?.focus();
+    });
+
+    /* ---------- API ---------- */
+
+    /** Запрос к API: изменяющие — POST с CSRF-токеном */
+    const call = async (method, params = {}, files = null, signal = undefined) => {
+        const isModifying = ['delete', 'createDir', 'rename', 'move', 'upload'].includes(method);
         let url = `${api}?method=${method}`;
-        let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}};
+        let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}, signal};
         if (isModifying) {
+            // CSRF-токен сессии админки: без него сервер изменяющий запрос не принимает
+            options.headers['X-CSRF-Token'] = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
             const body = new FormData();
-            Object.entries(params).forEach(([key, value]) => body.append(key, value));
+            // список — как key[] (PHP соберёт массив)
+            Object.entries(params).forEach(([key, value]) => (Array.isArray(value)
+                ? value.forEach((part) => body.append(`${key}[]`, part))
+                : body.append(key, value)));
             (files ?? []).forEach((file) => body.append('file[]', file));
             // путь — и в адресе: Manager читает $_REQUEST, а размер тела проверяет до разбора
             url += `&path=${encodeURIComponent(params.path ?? '')}`;
@@ -122,79 +461,137 @@ if (root && modal) {
         return json.items ?? [];
     };
 
-    const report = (error) => toast(error.message || 'Ошибка', 'error');
-
-    /** Недоступность кнопки: атрибут и aria-disabled (Button ядра) */
-    const setDisabled = (button, isDisabled) => {
-        button.disabled = isDisabled;
-        button.toggleAttribute('aria-disabled', isDisabled);
-    };
-
     /* ---------- дерево ---------- */
 
     const drawTree = (nodes, depth = 0) => {
-        const list = element('ul', depth ? 'file-tree__group' : 'file-tree');
+        const list = element('ul');
         list.setAttribute('role', depth ? 'group' : 'none');
         nodes.forEach((node) => {
-            const item = element('li', 'file-tree__item');
+            const item = element('li');
             item.setAttribute('role', 'none');
-            const hasChildren = node.data.length > 0;
-            const isOpen = state.expanded.has(node.path);
-            const row = element('button', 'file-tree-row');
+            // по уровням: стрелка — только если вложенные папки есть (has_children), пустую не раскрыть
+            const hasChildren = node.has_children ?? (node.data?.length > 0);
+            const isOpen = hasChildren && state.expanded.has(node.path);
+            const row = element('button', 'fm-tree-row');
             row.type = 'button';
             row.setAttribute('role', 'treeitem');
             row.dataset.fmPath = node.path;
             row.dataset.fmKind = 'dir';
             row.style.setProperty('--depth', String(depth));
-            row.classList.toggle('file-tree-row_active', node.path === state.path);
-            row.classList.toggle('file-tree-row_open', isOpen);
-            row.classList.toggle('file-tree-row_leaf', !hasChildren);
             if (hasChildren) {
                 row.setAttribute('aria-expanded', String(isOpen));
             }
             if (node.path === state.path) {
                 row.setAttribute('aria-current', 'true');
             }
-            const arrow = element('span', 'file-tree-row__arrow');
-            arrow.dataset.fmToggle = '';
+            const toggle = element('span', 'fm-tree-row__toggle');
             if (hasChildren) {
-                arrow.append(icon('down'));
+                toggle.dataset.fmToggle = '';
+                toggle.append(icon('forward', 'fm-icon_16'));
             }
-            row.append(arrow, icon('folder', 'fm-icon file-tree-row__icon'), element('span', 'file-tree-row__name', node.name));
+            row.append(toggle, icon('folder', 'fm-icon_16'), element('span', 'fm-tree-row__name', node.name));
             item.append(row);
-            if (hasChildren && isOpen) {
-                item.append(drawTree(node.data, depth + 1));
+            if (isOpen && node.data?.length) {
+                const group = drawTree(node.data, depth + 1);
+                // только что раскрытая ветка появляется плавно
+                if (node.path === state.justExpanded) {
+                    group.classList.add('fm-tree__group_in');
+                }
+                item.append(group);
             }
             list.append(item);
         });
         return list;
     };
 
-    const renderTree = () => treeElement.replaceChildren(drawTree(state.tree));
+    const renderTree = () => {
+        treeElement.replaceChildren(drawTree(state.tree));
+        // плавно — только в момент раскрытия, при следующих перерисовках ветка уже на месте
+        state.justExpanded = null;
+    };
+
+    const findNode = (nodes, path) => {
+        for (const node of nodes ?? []) {
+            if (node.path === path) {
+                return node;
+            }
+            if (path.startsWith(node.path + '/')) {
+                return findNode(node.data, path);
+            }
+        }
+        return null;
+    };
+
+    /** Раскрытые папки по глубине: родитель раньше вложенной */
+    const expandedPaths = () => [...state.expanded].sort((a, b) => a.split('/').length - b.split('/').length);
+
+    /**
+     * Дерево по уровням: корень и раскрытые папки — по одному уровню (getTree depth=1), а не весь каталог файлов.
+     * Ответ устаревшего запроса не применяется
+     */
+    const loadTree = async () => {
+        const request = ++state.treeRequest;
+        const paths = expandedPaths();
+        const [rootLevel, ...levels] = await Promise.all([
+            call('getTree', {path: '', depth: 1}),
+            ...paths.map((path) => call('getTree', {path, depth: 1}).catch(() => null)),
+        ]);
+        if (request !== state.treeRequest) {
+            return;
+        }
+        const children = new Map(paths.map((path, index) => [path, levels[index]]));
+        const attach = (nodes) => nodes.forEach((node) => {
+            node.data = children.get(node.path) ?? null;
+            if (node.data) {
+                attach(node.data);
+            }
+        });
+        attach(rootLevel);
+        state.tree = rootLevel;
+        renderTree();
+    };
+
+    /** Догружает вложенные папки раскрытых узлов, которых ещё нет */
+    const loadMissingLevels = async () => {
+        for (const path of expandedPaths()) {
+            const node = findNode(state.tree, path);
+            if (node && node.data === null && node.has_children) {
+                const request = state.treeRequest;
+                const data = await call('getTree', {path, depth: 1}).catch(() => []);
+                if (request !== state.treeRequest) {
+                    return;
+                }
+                node.data = data;
+                renderTree();
+            }
+        }
+    };
 
     /* ---------- крошки ---------- */
 
     const renderCrumbs = () => {
-        const crumbs = find('[data-fm-crumbs]');
-        const home = element('button', 'file-tool file-window__home');
-        home.type = 'button';
-        home.dataset.fmPath = '';
-        home.setAttribute('aria-label', 'В корень');
-        home.append(icon('home'));
+        // в корне «домой» отмечена: видно, где находишься
+        if (state.path === '') {
+            homeButton.setAttribute('aria-current', 'true');
+        } else {
+            homeButton.removeAttribute('aria-current');
+        }
         const parts = state.path.split('/').filter(Boolean);
-        const items = parts.map((name, index) => {
-            const path = '/' + parts.slice(0, index + 1).join('/');
+        const nodes = [];
+        parts.forEach((name, index) => {
+            nodes.push(element('span', 'fm-crumbs__sep', '/'));
             const isLast = index === parts.length - 1;
-            const crumb = element(isLast ? 'span' : 'button', 'file-window__crumb' + (isLast ? ' file-window__crumb_current' : ''), name);
+            const crumb = element(isLast ? 'span' : 'button', 'fm-crumbs__item', name);
             if (isLast) {
                 crumb.setAttribute('aria-current', 'page');
             } else {
                 crumb.type = 'button';
-                crumb.dataset.fmPath = path;
+                crumb.dataset.fmPath = '/' + parts.slice(0, index + 1).join('/');
             }
-            return crumb;
+            nodes.push(crumb);
         });
-        crumbs.replaceChildren(home, ...items);
+        crumbsElement.replaceChildren(...nodes);
+        crumbsElement.scrollLeft = crumbsElement.scrollWidth;
     };
 
     /* ---------- файлы ---------- */
@@ -203,12 +600,11 @@ if (root && modal) {
         name: (a, b) => a.name.localeCompare(b.name, 'ru', {numeric: true}),
         date: (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
         size: (a, b) => (b.bytes ?? 0) - (a.bytes ?? 0),
-        type: (a, b) => (a.name.split('.').pop() ?? '').localeCompare(b.name.split('.').pop() ?? '') || compare.name(a, b),
     };
 
     const getVisibleItems = () => {
         const query = searchInput.value.trim().toLowerCase();
-        const sort = compare[sortInput.value] ?? compare.name;
+        const sort = compare[state.sort] ?? compare.name;
         return state.items
             .filter((item) => query === '' || item.name.toLowerCase().includes(query))
             // папки — первыми
@@ -216,144 +612,198 @@ if (root && modal) {
     };
 
     const sizeText = (item) => (item.type === 'dir'
-        ? `${item.count} ${['элемент', 'элемента', 'элементов'][plural(item.count)]}`
-        : `${item.size} ${item.size_ext}`);
-
-    const plural = (count) => {
-        const mod10 = count % 10;
-        const mod100 = count % 100;
-        if (mod10 === 1 && mod100 !== 11) {
-            return 0;
-        }
-        return mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? 1 : 2;
-    };
+        ? `${item.count} ${plural(item.count, ['элемент', 'элемента', 'элементов'])}`
+        : `${Number(item.size).toLocaleString('ru-RU')} ${item.size_ext}`);
 
     const drawCard = (item, style = 'default') => {
-        const card = element('button', `file-card file-card_style_${style}`);
-        card.type = 'button';
+        const card = element('div', 'fm-card');
         card.setAttribute('role', 'option');
-        if (item.path) {
-            card.dataset.fmPath = item.path;
-            card.dataset.fmKind = item.type;
+        if (style !== 'default') {
+            card.classList.add(`fm-card_${style}`);
         }
-
-        const preview = element('span', 'file-card__preview');
+        const preview = element('span', 'fm-card__preview');
         if (style === 'uploading') {
-            preview.append(element('span', 'file-card__loader'));
+            preview.append(element('span', 'fm-spinner'));
         } else if (style === 'error') {
-            preview.append(icon('close', 'fm-icon file-card__icon'));
+            preview.append(icon('close'));
         } else if (item.type === 'dir') {
-            preview.append(icon('folder', 'fm-icon file-card__icon'));
+            preview.append(icon('folder'));
         } else if (item.is_pic) {
-            const image = element('img', 'file-card__image');
+            const image = element('img', 'fm-card__image');
             image.src = filesRoot + item.path;
             image.alt = '';
             image.loading = 'lazy';
+            image.decoding = 'async';
+            image.draggable = false;
             preview.append(image);
         } else {
-            preview.append(icon('file', 'fm-icon file-card__icon'));
+            preview.append(icon('file'));
         }
-        // чек — виден при выборе нескольких (file-card_selected)
-        const check = element('span', 'file-card__check');
-        check.append(icon('check'));
-        preview.append(check);
-        if (style !== 'uploading' && style !== 'error') {
-            preview.append(element('span', 'file-card__size', sizeText(item)));
+        if (item.path) {
+            card.dataset.fmPath = item.path;
+            card.dataset.fmKind = item.type;
+            card.tabIndex = -1;
+            if (!isAccepted(item)) {
+                card.classList.add('fm-card_disabled');
+                card.setAttribute('aria-disabled', 'true');
+            } else {
+                const check = element('button', 'fm-card__check');
+                check.type = 'button';
+                check.tabIndex = -1;
+                check.setAttribute('aria-label', `Отметить «${item.name}»`);
+                check.append(icon('checkbox-off'));
+                // в карточке, а не в превью: на телефоне галочка стоит слева от превью (Figma file-card-mobile)
+                card.append(check);
+            }
+            preview.append(element('span', 'fm-card__badge', sizeText(item)));
         }
-        card.append(preview, element('span', 'file-card__name', item.name));
-        card.append(element('span', 'file-card__date', style === 'error' ? item.error : (item.edited ?? '')));
-        card.append(element('span', 'file-card__weight', style === 'uploading' || style === 'error' ? '' : sizeText(item)));
+        card.append(preview, element('span', 'fm-card__name', item.name));
+        card.title = item.name;
+        card.append(element('span', 'fm-card__date', style === 'error' ? item.error : (item.edited ?? '')));
+        card.append(element('span', 'fm-card__weight', item.path ? sizeText(item) : ''));
         applySelection(card);
         return card;
     };
 
-    /** Выбор на карточке: один — active, несколько (или режим multiple) — selected с чеком */
+    /** Выбор на карточке без перерисовки: aria-selected и галочка */
     const applySelection = (card) => {
-        const isSelected = state.selected.has(card.dataset.fmPath);
-        const isMulti = state.multiple || state.selected.size > 1;
+        const path = card.dataset.fmPath;
+        if (!path) {
+            return;
+        }
+        const isSelected = state.selected.has(path);
         card.setAttribute('aria-selected', String(isSelected));
-        card.classList.toggle('file-card_active', isSelected && !isMulti);
-        card.classList.toggle('file-card_selected', isSelected && isMulti);
+        // галочка стоит только в режиме отметки: одиночный выбор кликом её не ставит
+        card.querySelector('.fm-card__check use')?.setAttribute('href', `${sprite}#fm-checkbox-${isSelected && state.checking ? 'on' : 'off'}`);
     };
 
-    /** Выбор меняется без перерисовки: двойной клик попадает в ту же карточку */
     const updateSelection = () => {
-        filesElement.querySelectorAll('.file-card[data-fm-path]').forEach(applySelection);
+        if (!state.selected.size) {
+            state.checking = false;
+        }
+        filesElement.classList.toggle('fm-files_multi', state.checking);
+        windowBox.classList.toggle('fm-window_checking', state.checking);
+        filesElement.querySelectorAll('.fm-card[data-fm-path]').forEach(applySelection);
         renderInfo();
     };
 
     const renderState = (visible) => {
         const stateElement = find('[data-fm-state]');
-        const isSearch = searchInput.value.trim() !== '';
         const isEmpty = !visible.length && !state.uploading.length && !state.failed.length;
-        stateElement.hidden = !isEmpty;
-        find('[data-fm-state-title]').textContent = isSearch ? 'Ничего не найдено' : 'Папка пуста';
-        find('[data-fm-state-text]').textContent = isSearch
-            ? 'Попробуйте изменить запрос'
-            : 'Загрузите файлы или перетащите их в окно';
+        stateElement.hidden = !state.loading && !isEmpty;
+        stateElement.classList.toggle('fm-loading', state.loading);
+        stateElement.querySelector('[data-fm-state-marker]').hidden = state.loading;
+        stateElement.querySelector('.fm-spinner')?.remove();
+        if (state.loading) {
+            stateElement.prepend(element('span', 'fm-spinner'));
+        }
+        const isSearch = searchInput.value.trim() !== '';
+        // тексты — Figma file-window empty, no-results; на телефоне перетаскивать некуда — кнопка внизу
+        find('[data-fm-state-title]').textContent = state.loading ? '' : (isSearch ? 'Ничего не найдено' : 'В папке пока нет файлов');
+        find('[data-fm-state-text]').textContent = state.loading ? '' : (isSearch
+            ? 'Попробуйте изменить запрос.'
+            : (mobile.matches ? 'Загрузите файлы кнопкой внизу.' : 'Загрузите файлы или перетащите их сюда.'));
     };
 
     const renderInfo = () => {
         const selected = state.items.filter((item) => state.selected.has(item.path));
         const name = find('[data-fm-info-name]');
         const meta = find('[data-fm-info-meta]');
-        if (selected.length > 1) {
+        if (selected.length > 1 || (state.checking && selected.length)) {
             name.textContent = `Выбрано: ${selected.length}`;
-            meta.textContent = '';
+            // окно открыто для одного файла (поле картинки): вставить можно только один
+            meta.textContent = state.select && !state.multiple && selected.filter((item) => item.type === 'file').length > 1
+                ? 'Для вставки выберите один файл'
+                : '';
         } else if (selected.length === 1) {
             const [item] = selected;
             name.textContent = item.name;
             meta.textContent = item.type === 'dir'
-                ? [sizeText(item), item.edited && `Изменена: ${item.edited}`].filter(Boolean).join(' · ')
+                ? [sizeText(item), item.edited && `Изменена: ${item.edited}`].filter(Boolean).join('   ')
                 : [`Вес: ${sizeText(item)}`, item.dimensions && `Размер: ${item.dimensions.replace('x', '×').replace('px', ' px')}`,
-                    `Изменён: ${item.edited}`].filter(Boolean).join(' · ');
+                    `Изменён: ${item.edited}`].filter(Boolean).join('   ');
         } else {
-            name.textContent = '';
+            // Figma: «Файл не выбран» в режиме выбора
+            name.textContent = state.select ? 'Файл не выбран' : '';
             meta.textContent = '';
         }
-        const files = selected.filter((item) => item.type === 'file');
-        const isDoneDisabled = !state.onSelect || !files.length;
-        [doneButton, find('.file-tabbar [data-fm-action="done"]')].forEach((button) => setDisabled(button, isDoneDisabled));
-        setDisabled(find('[data-fm-delete-folder]'), state.path === '');
+        name.classList.toggle('fm-info__empty', !selected.length);
+        const files = selected.filter((item) => item.type === 'file' && isAccepted(item));
+        const isDoneDisabled = !state.select || !files.length || (!state.multiple && files.length > 1);
+        win.querySelectorAll('[data-fm-action="done"]').forEach((button) => {
+            button.disabled = isDoneDisabled;
+        });
+        find('[data-fm-delete-folder]').disabled = state.path === '';
     };
 
-    const renderFiles = () => {
-        const visible = getVisibleItems();
-        filesElement.setAttribute('aria-multiselectable', String(state.multiple));
+    /** @param {boolean} animate Карточки появляются мягко (после загрузки папки), а не при каждом выборе */
+    const renderFiles = (animate = false) => {
+        const visible = state.loading ? [] : getVisibleItems();
+        filesElement.classList.toggle('fm-files_in', animate);
+        filesElement.setAttribute('aria-multiselectable', 'true');
+        filesElement.setAttribute('aria-busy', String(state.loading));
         filesElement.replaceChildren(
             ...state.uploading.map((name) => drawCard({name}, 'uploading')),
             ...state.failed.map((item) => drawCard(item, 'error')),
             ...visible.map((item) => drawCard(item, state.added.has(item.path) ? 'new' : 'default')),
         );
+        if (animate) {
+            [...filesElement.children].forEach((card, index) => card.style.setProperty('--i', String(index)));
+        }
+        updateSelection();
         renderState(visible);
-        renderInfo();
     };
 
     /* ---------- загрузка данных ---------- */
 
-    const loadTree = async () => {
-        state.tree = await call('getTree', {path: ''});
-        renderTree();
-    };
-
-    const loadFiles = async () => {
-        state.items = await call('getFileList', {path: state.path, include_dirs: 1});
+    /** Список папки: прежний запрос отменяется, ответ для другой папки не применяется (быстрые клики) */
+    const loadFiles = async ({quiet = false} = {}) => {
+        const path = state.path;
+        state.filesAbort?.abort();
+        const abort = new AbortController();
+        state.filesAbort = abort;
+        if (!quiet) {
+            // сразу пусто и загрузка, а не прежняя папка под новыми крошками
+            state.loading = true;
+            state.items = [];
+            renderFiles();
+        }
+        let items;
+        try {
+            items = await call('getFileList', {path, include_dirs: 1}, null, abort.signal);
+        } catch (error) {
+            if (abort.signal.aborted) {
+                return;
+            }
+            state.loading = false;
+            renderFiles();
+            throw error;
+        }
+        if (abort.signal.aborted || path !== state.path) {
+            return;
+        }
+        state.loading = false;
+        state.items = items;
         // выбор остаётся только у существующих
-        const paths = new Set(state.items.map((item) => item.path));
-        state.selected = new Set([...state.selected].filter((path) => paths.has(path)));
-        renderFiles();
+        const paths = new Set(items.map((item) => item.path));
+        state.selected = new Set([...state.selected].filter((item) => paths.has(item)));
+        renderFiles(!quiet);
     };
 
     const navigate = async (path) => {
+        closeMenus();
         state.path = path;
         state.selected.clear();
+        state.checking = false;
+        state.anchor = null;
         state.failed = [];
         searchInput.value = '';
-        // путь до папки раскрыт в дереве
+        // путь до папки раскрыт в дереве (сама папка — нет: её вложенные видны в списке)
         const parts = path.split('/').filter(Boolean);
-        parts.forEach((part, index) => state.expanded.add('/' + parts.slice(0, index + 1).join('/')));
+        parts.slice(0, -1).forEach((part, index) => state.expanded.add('/' + parts.slice(0, index + 1).join('/')));
         renderCrumbs();
         renderTree();
+        loadMissingLevels().catch(report);
         try {
             await loadFiles();
         } catch (error) {
@@ -361,9 +811,10 @@ if (root && modal) {
         }
     };
 
+    /** Перечитать дерево и список без мигания (после действия) */
     const refresh = async () => {
         try {
-            await Promise.all([loadTree(), loadFiles()]);
+            await Promise.all([loadTree(), loadFiles({quiet: true})]);
         } catch (error) {
             report(error);
         }
@@ -371,56 +822,144 @@ if (root && modal) {
 
     /* ---------- выбор ---------- */
 
-    const select = (path, isToggle) => {
-        if (isToggle) {
-            state.selected.has(path) ? state.selected.delete(path) : state.selected.add(path);
-        } else {
-            state.selected = new Set([path]);
-        }
+    const selectOnly = (path) => {
+        state.checking = false;
+        state.selected = new Set([path]);
+        state.anchor = path;
         updateSelection();
     };
 
-    const done = () => {
-        const files = state.items.filter((item) => item.type === 'file' && state.selected.has(item.path));
-        if (!files.length || !state.onSelect) {
+    /**
+     * Отметить или снять отметку. Вне режима отметки галочка пустая и у выбранного кликом файла — нажатие на неё
+     * отмечает этот файл (а не снимает выбор) и включает режим; Ctrl/⌘ (keep) оставляет и выбранный кликом
+     */
+    const toggleSelect = (path, {keep = false} = {}) => {
+        if (!isAccepted(getItem(path))) {
             return;
         }
-        const onSelect = state.onSelect;
-        window.SimflexModal.close(MODAL_ID);
-        onSelect(files.map((item) => ({path: item.path, url: filesRoot + item.path, name: item.name, isImage: Boolean(item.is_pic)})));
+        if (!state.checking) {
+            state.selected = new Set(keep ? [...state.selected, path] : [path]);
+            state.anchor = path;
+            state.checking = true;
+            updateSelection();
+            return;
+        }
+        state.selected.has(path) ? state.selected.delete(path) : state.selected.add(path);
+        state.anchor = path;
+        state.checking = state.selected.size > 0;
+        updateSelection();
+    };
+
+    /** Shift+клик: от прежнего до этого по видимому порядку */
+    const selectRange = (path) => {
+        const visible = getVisibleItems().filter(isAccepted).map((item) => item.path);
+        const from = visible.indexOf(state.anchor);
+        const to = visible.indexOf(path);
+        if (from < 0 || to < 0) {
+            selectOnly(path);
+            return;
+        }
+        visible.slice(Math.min(from, to), Math.max(from, to) + 1).forEach((item) => state.selected.add(item));
+        state.checking = true;
+        updateSelection();
+    };
+
+    /** «Готово»: выбранные подходящие файлы уходят вызвавшему, когда окно закроется */
+    const done = () => {
+        const files = state.items.filter((item) => item.type === 'file' && state.selected.has(item.path) && isAccepted(item));
+        if (!files.length || !state.select) {
+            return;
+        }
+        state.result = files.map((item) => ({path: item.path, url: filesRoot + item.path, name: item.name, isImage: Boolean(item.is_pic)}));
+        hideDialog(win);
+    };
+
+    /** Двойной клик или Enter по файлу: выбрать только его и сразу «Готово» */
+    const pick = (path) => {
+        if (!isAccepted(getItem(path))) {
+            return;
+        }
+        state.selected = new Set([path]);
+        done();
     };
 
     /* ---------- действия ---------- */
 
-    const getItem = (path) => state.items.find((item) => item.path === path)
-        ?? {type: 'dir', path, name: baseName(path)};
-
-    const openNameModal = (target, value) => {
-        const input = target.querySelector('[data-fm-name]');
-        input.value = value;
-        window.SimflexModal.open(target.id);
-        input.focus();
-        input.select();
+    /**
+     * Где на сайте стоят ссылки на элементы (API usage): «в 3 записях (content, menu)», пусто — нигде.
+     * Ссылка на папку — ссылка на что-то в ней
+     */
+    const usageText = async (items) => {
+        const results = await Promise.all(items.map((item) => call('usage', {path: item.path}).catch(() => [])));
+        const tables = new Map();
+        results.flat().forEach(({table, count}) => tables.set(table, (tables.get(table) ?? 0) + count));
+        const total = [...tables.values()].reduce((sum, count) => sum + count, 0);
+        return total ? `в ${total} ${plural(total, ['записи', 'записях', 'записях'])} (${[...tables.keys()].join(', ')})` : '';
     };
 
-    const saveName = async (target, method) => {
-        const name = target.querySelector('[data-fm-name]').value.trim();
+    /** Предупреждение в окне: ссылки перестанут работать. Окно открыто сразу, предупреждение — когда ответит сервер */
+    const warnUsage = (dialog, items, after) => {
+        const warning = dialog.querySelector('[data-fm-warning]');
+        warning.hidden = true;
+        const request = Symbol('usage');
+        dialog.usageRequest = request;
+        usageText(items).then((text) => {
+            if (text && dialog.open && dialog.usageRequest === request) {
+                const what = items.length > 1 ? 'них' : (items[0].type === 'dir' ? 'файлы папки' : 'файл');
+                warning.textContent = `Ссылки на ${what} есть ${text}. ${after}`;
+                warning.hidden = false;
+            }
+        });
+    };
+
+    /** Окно имени: rename — прежнее имя в «Старое название» и в поле, create — пустое поле */
+    const openNameDialog = (dialog, value) => {
+        const input = dialog.querySelector('[data-fm-name]');
+        const oldName = dialog.querySelector('[data-fm-old-name]');
+        if (oldName) {
+            oldName.value = value;
+        }
+        input.value = value;
+        showDialog(dialog);
+        // без прокрутки: окно ещё выезжает (шторка снизу), прокрутка сдвинула бы его содержимое
+        input.focus({preventScroll: true});
+        // имя без расширения выделено: обычно меняют его
+        const dot = value.lastIndexOf('.');
+        input.setSelectionRange(0, dot > 0 ? dot : value.length);
+    };
+
+    const saveName = async (dialog, method) => {
+        const input = dialog.querySelector('[data-fm-name]');
+        const name = input.value.trim();
         if (name === '') {
+            input.focus();
             return;
         }
+        const target = state.target;
         try {
             if (method === 'rename') {
-                await call('rename', {path: state.target.path, name});
-                // переименованная открытая папка — новый путь
-                if (state.target.type === 'dir' && (state.path === state.target.path || state.path.startsWith(state.target.path + '/'))) {
-                    state.path = parentPath(state.target.path) + '/' + name + state.path.slice(state.target.path.length);
+                if (name === target.name) {
+                    hideDialog(dialog);
+                    return;
                 }
+                await call('rename', {path: target.path, name});
+                // переименованная открытая папка — новый путь
+                if (target.type === 'dir' && (state.path === target.path || state.path.startsWith(target.path + '/'))) {
+                    state.path = parentPath(target.path) + '/' + name + state.path.slice(target.path.length);
+                    renderCrumbs();
+                }
+                toast(target.type === 'dir' ? 'Папка переименована' : 'Файл переименован');
             } else {
-                await call('createDir', {path: state.target?.path ?? state.path, name});
+                const parent = target?.path ?? state.path;
+                await call('createDir', {path: parent, name});
+                toast(`Папка «${name}» создана`);
+                // «Новая папка» в окне «Переместить»: сразу в неё
+                if (moveDialog.open) {
+                    moveBrowse(`${parent}/${name}`);
+                }
             }
-            window.SimflexModal.close(target.id);
+            hideDialog(dialog);
             await refresh();
-            renderCrumbs();
         } catch (error) {
             report(error);
         }
@@ -430,27 +969,201 @@ if (root && modal) {
         if (!items.length) {
             return;
         }
+        // тексты — Figma file-modal (delfolder, delfile)
         const isFolder = items.length === 1 && items[0].type === 'dir';
-        const message = items.length > 1
-            ? `Будет удалено: ${items.length}. Корзины нет, восстановить файлы нельзя.`
-            : `«${items[0].name}» будет ${isFolder ? 'удалена со всем содержимым' : 'удалён'}. Корзины нет.`;
-        const isConfirmed = await confirmAction(message, isFolder ? 'Удалить папку?' : 'Удалить файл?', 'Удалить');
-        if (!isConfirmed) {
+        const [title, text] = items.length > 1
+            ? ['Удалить выбранное?', `Будет удалено: ${items.length}. Всё удалится сразу.`]
+            : (isFolder
+                ? ['Удалить папку?', 'Папка и всё, что в ней, будут удалены сразу.']
+                : ['Удалить файл?', 'Файл будет удалён сразу.']);
+        const confirmed = confirmAction(title, text);
+        warnUsage(confirmDialog, items, 'После удаления они перестанут работать.');
+        if (!await confirmed) {
             return;
         }
+        const deleted = [];
         try {
             for (const item of items) {
                 await call('delete', {path: item.path});
+                deleted.push(item);
             }
-            if (items.some((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')))) {
-                await navigate(parentPath(items.find((item) => item.type === 'dir').path));
-            }
-            state.selected.clear();
+            toast(items.length > 1 ? `Удалено: ${deleted.length}` : (isFolder ? 'Папка удалена' : 'Файл удалён'));
+        } catch (error) {
+            // несколько: какие уже удалены, а какой нет
+            const failed = items[deleted.length];
+            toast(items.length > 1
+                ? `Удалено ${deleted.length} из ${items.length}. «${failed.name}»: ${error.message || 'ошибка'}`
+                : error.message || 'Ошибка', 'error');
+        }
+        const removedDir = deleted.find((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')));
+        state.selected.clear();
+        if (removedDir) {
+            await navigate(parentPath(removedDir.path));
+            loadTree().catch(report);
+        } else {
             await refresh();
+        }
+    };
+
+    /* ---------- перемещение ---------- */
+
+    /** Что перемещается, из какой папки, какая папка открыта в окне выбора; номер запроса — устаревший не рисуется */
+    const moving = {items: [], from: '', path: '', request: 0};
+
+    /** Папка — одна из перемещаемых или внутри неё: туда нельзя */
+    const isMovedPath = (path) => moving.items.some((item) => item.type === 'dir'
+        && (path === item.path || path.startsWith(item.path + '/')));
+
+    /** Путь в окне выбора: «Корень / images / company», последний — открытая папка; «сюда» — не в ту же папку */
+    const renderMovePath = () => {
+        const parts = moving.path.split('/').filter(Boolean);
+        const crumbs = [{name: 'Корень', path: ''},
+            ...parts.map((name, index) => ({name, path: '/' + parts.slice(0, index + 1).join('/')}))];
+        const nodes = [];
+        crumbs.forEach((crumb, index) => {
+            if (index) {
+                nodes.push(element('span', 'fm-move__sep', '/'));
+            }
+            const isLast = index === crumbs.length - 1;
+            const node = element(isLast ? 'span' : 'button', 'fm-move__crumb', crumb.name);
+            if (isLast) {
+                node.setAttribute('aria-current', 'location');
+            } else {
+                node.type = 'button';
+                node.dataset.fmMoveTo = crumb.path;
+            }
+            nodes.push(node);
+        });
+        if (moving.path === moving.from) {
+            nodes.push(element('span', 'fm-move__here', 'сейчас здесь'));
+        }
+        const pathElement = moveDialog.querySelector('[data-fm-move-path]');
+        pathElement.replaceChildren(...nodes);
+        // длинный путь — виден конец
+        pathElement.scrollLeft = pathElement.scrollWidth;
+        moveDialog.querySelector('[data-fm-move-back]').disabled = moving.path === '';
+        moveDialog.querySelector('[data-fm-action="move-here"]').disabled = moving.path === moving.from;
+    };
+
+    /** Открыть папку в окне выбора: её вложенные папки (getTree depth=1) */
+    const moveBrowse = async (path) => {
+        moving.path = path;
+        renderMovePath();
+        const list = moveDialog.querySelector('[data-fm-move-list]');
+        const request = ++moving.request;
+        list.classList.add('is-loading');
+        let nodes = [];
+        try {
+            nodes = await call('getTree', {path, depth: 1});
         } catch (error) {
             report(error);
         }
+        if (request !== moving.request) {
+            return;
+        }
+        const rows = nodes.map((node) => {
+            const row = element('button', 'fm-move__row');
+            row.type = 'button';
+            row.dataset.fmMoveTo = node.path;
+            row.append(icon('folder'), element('span', 'fm-move__name', node.name));
+            if (isMovedPath(node.path)) {
+                row.disabled = true;
+                row.append(element('span', 'fm-move__note', 'перемещается'));
+            } else {
+                row.append(icon('forward', 'fm-icon_16 fm-move__arrow'));
+            }
+            return row;
+        });
+        list.replaceChildren(...(rows.length ? rows : [element('p', 'fm-move__empty', 'Вложенных папок нет')]));
+        list.classList.remove('is-loading');
+        list.scrollTop = 0;
+        // уровень сменяется плавно
+        list.classList.remove('fm-move__list_in');
+        void list.offsetWidth;
+        list.classList.add('fm-move__list_in');
     };
+
+    /** «Переместить»: окно выбора папки, открыто там, где элементы лежат сейчас */
+    const openMove = (items) => {
+        if (!items.length) {
+            return;
+        }
+        moving.items = items;
+        moving.from = parentPath(items[0].path);
+        moveDialog.querySelector('[data-fm-text]').textContent = items.length > 1
+            ? `Выбрано: ${items.length}. Откройте папку, куда их переместить.`
+            : `Откройте папку, куда переместить ${items[0].type === 'dir' ? 'папку' : 'файл'} «${items[0].name}».`;
+        showDialog(moveDialog);
+        moveBrowse(moving.from);
+        warnUsage(moveDialog, items, 'После перемещения они перестанут работать.');
+        moveDialog.querySelector('[data-fm-move-back]').focus({preventScroll: true});
+    };
+
+    const moveHere = async () => {
+        const {items, path} = moving;
+        const button = moveDialog.querySelector('[data-fm-action="move-here"]');
+        if (path === moving.from || isMovedPath(path) || button.disabled) {
+            return;
+        }
+        button.disabled = true;
+        let isMoved = false;
+        try {
+            const moved = await call('move', {path, items: items.map((item) => item.path)});
+            isMoved = true;
+            hideDialog(moveDialog);
+            toast(items.length > 1
+                ? `Перемещено: ${moved.length}`
+                : (items[0].type === 'dir' ? 'Папка перемещена' : 'Файл перемещён'));
+        } catch (error) {
+            report(error);
+            button.disabled = false;
+        }
+        // открытая папка была внутри перемещённой (меню папки в дереве) — открыть её на новом месте
+        const dir = items.find((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')));
+        if (isMoved && dir) {
+            await navigate(`${path}/${dir.name}${state.path.slice(dir.path.length)}`);
+            loadTree().catch(report);
+            return;
+        }
+        if (isMoved) {
+            state.selected.clear();
+            state.checking = false;
+        }
+        // и при ошибке: часть могла переместиться
+        await refresh();
+        updateSelection();
+    };
+
+    moveDialog.addEventListener('click', (event) => {
+        const to = event.target.closest('[data-fm-move-to]');
+        if (to) {
+            if (!to.disabled) {
+                moveBrowse(to.dataset.fmMoveTo);
+            }
+            return;
+        }
+        if (event.target.closest('[data-fm-move-back]')) {
+            if (moving.path !== '') {
+                moveBrowse(parentPath(moving.path));
+            }
+            return;
+        }
+        const action = event.target.closest('[data-fm-action]')?.dataset.fmAction;
+        if (action === 'move-here') {
+            moveHere();
+        } else if (action === 'move-create') {
+            state.target = {type: 'dir', path: moving.path, name: baseName(moving.path)};
+            openNameDialog(createDialog, '');
+        }
+    });
+
+    // Backspace — на уровень выше
+    moveDialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Backspace' && moving.path !== '') {
+            event.preventDefault();
+            moveBrowse(parentPath(moving.path));
+        }
+    });
 
     const copyPath = async (item) => {
         try {
@@ -470,16 +1183,83 @@ if (root && modal) {
         link.remove();
     };
 
-    const upload = async (files) => {
+    /** Что сервер умеет сжимать: ['image', 'video'] (видео — если есть ffmpeg); спрашивается один раз */
+    let compression = null;
+    const getCompression = async () => {
+        compression ??= await call('compression').catch(() => []);
+        return compression;
+    };
+
+    /**
+     * Сжимать ли картинки и видео перед загрузкой: true / false, null — пользователь закрыл окно (не загружать).
+     * Нечего сжимать (документы, аудио, GIF) — false без вопроса. «Запомнить выбор» — до конца работы (sessionStorage)
+     */
+    const askCompress = async (files) => {
+        const kinds = await getCompression();
+        const images = kinds.includes('image') ? files.filter((file) => IMAGE_EXTENSIONS.includes(extensionOf(file.name))) : [];
+        const videos = kinds.includes('video') ? files.filter((file) => VIDEO_EXTENSIONS.includes(extensionOf(file.name))) : [];
+        if (!images.length && !videos.length) {
+            return false;
+        }
+        const remembered = sessionStorage.getItem(COMPRESS_KEY);
+        if (remembered !== null) {
+            return remembered === '1';
+        }
+        const list = compressDialog.querySelector('[data-fm-compress-list]');
+        list.replaceChildren(...[
+            images.length && `Картинки (${images.length}) — в WebP, не больше 2560 px. Обычно в несколько раз легче, на сайте выглядят так же.`,
+            videos.length && `Видео (${videos.length}) — в MP4, не больше 1920 px. Загрузка займёт больше времени.`,
+        ].filter(Boolean).map((text) => element('li', 'fm-compress__item', text)));
+        const remember = compressDialog.querySelector('[data-fm-compress-remember]');
+        remember.checked = false;
+        return new Promise((resolve) => {
+            let answer = null;
+            const onClick = (event) => {
+                const action = event.target.closest('[data-fm-action]')?.dataset.fmAction;
+                if (action === 'compress-yes' || action === 'compress-no') {
+                    answer = action === 'compress-yes';
+                    hideDialog(compressDialog);
+                }
+            };
+            compressDialog.addEventListener('click', onClick);
+            compressDialog.addEventListener('close', () => {
+                compressDialog.removeEventListener('click', onClick);
+                if (answer !== null && remember.checked) {
+                    sessionStorage.setItem(COMPRESS_KEY, answer ? '1' : '0');
+                }
+                resolve(answer);
+            }, {once: true});
+            showDialog(compressDialog);
+            compressDialog.querySelector('[data-fm-action="compress-yes"]').focus({preventScroll: true});
+        });
+    };
+
+    /** Загрузка в папку path (по умолчанию — открытую; «Загрузить файлы» в меню папки — в неё) */
+    const upload = async (chosen, path = state.path) => {
+        if (path !== state.path) {
+            await navigate(path);
+        }
+        // при accept — только подходящие файлы
+        const files = chosen.filter((file) => isAccepted({type: 'file', name: file.name}));
+        const skipped = chosen.filter((file) => !files.includes(file));
+        if (skipped.length) {
+            const allowed = state.accept.size ? `можно выбрать только ${[...state.accept].join(', ')}` : 'файлы выбрать нельзя';
+            toast(`Здесь ${allowed}. Не загружено: ${skipped.map((file) => file.name).join(', ')}`, 'error');
+        }
         if (!files.length) {
             return;
         }
-        const names = [...files].map((file) => file.name);
+        // картинки и видео — сжимать или нет, решает пользователь; закрыл окно вопроса — не загружаем
+        const compress = await askCompress(files);
+        if (compress === null) {
+            return;
+        }
+        const names = files.map((file) => file.name);
         state.uploading.push(...names);
         renderFiles();
         let statuses = [];
         try {
-            statuses = await call('upload', {path: state.path}, [...files]);
+            statuses = await call('upload', {path, compress: compress ? '1' : '0'}, files);
         } catch (error) {
             report(error);
         }
@@ -500,61 +1280,74 @@ if (root && modal) {
         const uploaded = statuses.filter((status) => !UPLOAD_ERRORS[status]);
         if (uploaded.length) {
             state.selected = new Set(state.multiple ? uploaded : uploaded.slice(-1));
+            state.checking = state.selected.size > 1;
+            state.anchor = uploaded[uploaded.length - 1];
             updateSelection();
         }
     };
 
-    /* ---------- меню ---------- */
+    const selectedItems = () => state.items.filter((item) => state.selected.has(item.path));
 
-    const closeMenus = () => Object.values(menus).forEach((menu) => {
-        menu.hidden = true;
-    });
-
-    const openMenu = (item, x, y) => {
+    const runAction = (action, item = null) => {
         closeMenus();
-        state.target = item;
-        if (item.type === 'file' && !state.selected.has(item.path)) {
-            select(item.path, false);
-        }
-        const menu = menus[item.type === 'dir' ? 'folder' : 'file'];
-        menu.hidden = false;
-        // у курсора, в пределах окна браузера
-        const rect = menu.getBoundingClientRect();
-        menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
-        menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
-        menu.querySelector('.file-menu__item')?.focus();
-    };
-
-    const runAction = (action, item) => {
-        const selectedItems = state.items.filter((entry) => state.selected.has(entry.path));
         switch (action) {
             case 'done':
                 done();
                 break;
+            case 'close':
+                hideDialog(win);
+                break;
             case 'upload':
+                fileInput.click();
+                break;
+            case 'upload-to':
+                // выбор файлов — сразу по нажатию (иначе браузер не откроет окно выбора)
+                state.uploadPath = item.path;
                 fileInput.click();
                 break;
             case 'refresh':
                 refresh();
                 break;
+            case 'select-item':
+                // «Выбрать» в меню (телефон): отметить и включить режим отметки
+                if (!state.selected.has(item.path) || !state.checking) {
+                    state.checking = true;
+                    state.selected.add(item.path);
+                    state.anchor = item.path;
+                    updateSelection();
+                }
+                break;
+            case 'delete-selected':
+                remove(selectedItems());
+                break;
+            case 'move-selected':
+                openMove(selectedItems());
+                break;
+            case 'move':
+                // несколько выбранных — если меню открыто на одном из них
+                openMove(state.selected.size > 1 && state.selected.has(item.path) ? selectedItems() : [item]);
+                break;
+            case 'cancel-selection':
+                state.selected.clear();
+                state.checking = false;
+                updateSelection();
+                break;
             case 'back':
-                state.path === '' ? window.SimflexModal.close(MODAL_ID) : navigate(parentPath(state.path));
+                state.path === '' ? hideDialog(win) : navigate(parentPath(state.path));
                 break;
             case 'create':
                 state.target = item?.type === 'dir' ? item : null;
-                openNameModal(createModal, '');
+                openNameDialog(createDialog, '');
                 break;
             case 'delete-folder':
                 if (state.path !== '') {
                     remove([getItem(state.path)]);
                 }
                 break;
-            case 'open':
-                navigate(item.path);
-                break;
             case 'rename':
                 state.target = item;
-                openNameModal(renameModal, item.name);
+                openNameDialog(renameDialog, item.name);
+                warnUsage(renameDialog, [item], 'После переименования они перестанут работать.');
                 break;
             case 'copy-path':
                 copyPath(item);
@@ -563,166 +1356,259 @@ if (root && modal) {
                 download(item);
                 break;
             case 'delete':
-                remove(item.type === 'file' && selectedItems.length > 1 ? selectedItems : [item]);
+                // несколько выбранных — если меню открыто на одном из них
+                remove(state.selected.size > 1 && state.selected.has(item.path) ? selectedItems() : [item]);
                 break;
             case 'rename-save':
-                saveName(renameModal, 'rename');
+                saveName(renameDialog, 'rename');
                 break;
             case 'create-save':
-                saveName(createModal, 'createDir');
+                saveName(createDialog, 'createDir');
                 break;
         }
     };
 
-    /* ---------- события ---------- */
+    /* ---------- события окна ---------- */
 
     const itemOf = (target) => {
-        const node = target.closest('[data-fm-path]');
-        if (!node || !modal.contains(node) || node.dataset.fmKind === undefined) {
+        const node = target.closest('[data-fm-path][data-fm-kind]');
+        if (!node || !win.contains(node)) {
             return null;
         }
-        return node.dataset.fmKind === 'dir' && node.classList.contains('file-tree-row')
+        return node.classList.contains('fm-tree-row')
             ? {type: 'dir', path: node.dataset.fmPath, name: baseName(node.dataset.fmPath)}
             : getItem(node.dataset.fmPath);
     };
 
-    modal.addEventListener('click', (event) => {
-        const actionButton = event.target.closest('[data-fm-action]');
-        if (actionButton && !actionButton.disabled) {
-            const menu = actionButton.closest('[data-fm-menu]');
+    const setSort = (value) => {
+        state.sort = SORT_LABELS[value] ? value : 'name';
+        find('[data-fm-sort-label]').textContent = SORT_LABELS[state.sort];
+        menus.sort.querySelectorAll('[data-fm-sort-value]').forEach((item) => {
+            item.setAttribute('aria-checked', String(item.dataset.fmSortValue === state.sort));
+        });
+        renderFiles();
+    };
+
+    win.addEventListener('click', (event) => {
+        const menuItem = event.target.closest('[data-fm-menu] [data-fm-action]');
+        if (menuItem) {
+            runAction(menuItem.dataset.fmAction, state.target);
+            return;
+        }
+        const sortItem = event.target.closest('[data-fm-sort-value]');
+        if (sortItem) {
+            setSort(sortItem.dataset.fmSortValue);
             closeMenus();
-            runAction(actionButton.dataset.fmAction, menu ? state.target : null);
+            sortButton.focus();
+            return;
+        }
+        if (event.target.closest('[data-fm-sort]')) {
+            const isOpen = isMenuOpen(menus.sort);
+            closeMenus();
+            if (!isOpen) {
+                const rect = sortButton.getBoundingClientRect();
+                openMenu(menus.sort, rect.left + 40, rect.bottom);
+                sortButton.setAttribute('aria-expanded', 'true');
+            }
             return;
         }
         closeMenus();
-        const row = event.target.closest('.file-tree-row');
+        const actionButton = event.target.closest('[data-fm-action]');
+        if (actionButton && !actionButton.disabled) {
+            runAction(actionButton.dataset.fmAction);
+            return;
+        }
+        const row = event.target.closest('.fm-tree-row');
         if (row) {
             const path = row.dataset.fmPath;
             // стрелка — раскрыть или свернуть, название — открыть папку
-            if (event.target.closest('[data-fm-toggle]') && !row.classList.contains('file-tree-row_leaf')) {
+            if (event.target.closest('[data-fm-toggle]')) {
                 state.expanded.has(path) ? state.expanded.delete(path) : state.expanded.add(path);
+                state.justExpanded = state.expanded.has(path) ? path : null;
                 renderTree();
+                loadMissingLevels().catch(report);
             } else {
                 navigate(path);
             }
             return;
         }
-        const crumb = event.target.closest('.file-window__crumbs [data-fm-path]');
+        const crumb = event.target.closest('.fm-crumbs [data-fm-path]');
         if (crumb) {
             navigate(crumb.dataset.fmPath);
             return;
         }
-        const card = event.target.closest('.file-card[data-fm-path]');
-        if (card) {
-            // на телефоне папка открывается касанием
-            if (card.dataset.fmKind === 'dir' && window.matchMedia('(max-width: 811px)').matches) {
-                navigate(card.dataset.fmPath);
-                return;
-            }
-            select(card.dataset.fmPath, state.multiple || event.ctrlKey || event.metaKey);
-        }
-    });
-
-    modal.addEventListener('dblclick', (event) => {
-        const card = event.target.closest('.file-card[data-fm-path]');
-        if (!card) {
+        const card = event.target.closest('.fm-card[data-fm-path]');
+        if (!card || card.classList.contains('fm-card_disabled')) {
             return;
         }
-        if (card.dataset.fmKind === 'dir') {
-            navigate(card.dataset.fmPath);
+        const path = card.dataset.fmPath;
+        // галочка и Ctrl/⌘ — отметить (включает режим отметки); Shift — диапазон; в режиме отметки клик по карточке
+        // отмечает её; иначе папка — открыть, файл — выбрать один
+        if (event.target.closest('.fm-card__check') || event.ctrlKey || event.metaKey) {
+            toggleSelect(path, {keep: !event.target.closest('.fm-card__check')});
+        } else if (event.shiftKey && state.anchor) {
+            selectRange(path);
+        } else if (state.checking) {
+            toggleSelect(path);
+        } else if (card.dataset.fmKind === 'dir') {
+            navigate(path);
+            return;
         } else {
-            state.selected = new Set([card.dataset.fmPath]);
-            done();
+            selectOnly(path);
+        }
+        card.focus({preventScroll: true});
+    });
+
+    win.addEventListener('dblclick', (event) => {
+        const card = event.target.closest('.fm-card[data-fm-path][data-fm-kind="file"]');
+        // в режиме отметки двойной клик — две отметки, а не «Готово»
+        if (card && !event.target.closest('.fm-card__check') && !state.checking) {
+            pick(card.dataset.fmPath);
         }
     });
 
-    modal.addEventListener('contextmenu', (event) => {
+    win.addEventListener('contextmenu', (event) => {
         const item = itemOf(event.target);
         if (item) {
             event.preventDefault();
-            openMenu(item, event.clientX, event.clientY);
+            openItemMenu(item, event.clientX, event.clientY);
         }
     });
 
-    // долгое нажатие на сенсорном экране — меню
+    // долгое нажатие на сенсорном экране — меню; клик, который браузер пришлёт, когда палец отпустят, не открывает
+    // папку и не закрывает меню
     let pressTimer = null;
-    modal.addEventListener('touchstart', (event) => {
+    let isLongPress = false;
+    win.addEventListener('touchstart', (event) => {
+        isLongPress = false;
         const item = itemOf(event.target);
-        if (!item) {
+        if (!item || event.touches.length > 1) {
             return;
         }
         const touch = event.touches[0];
-        pressTimer = setTimeout(() => openMenu(item, touch.clientX, touch.clientY), LONG_PRESS);
+        pressTimer = setTimeout(() => {
+            isLongPress = true;
+            openItemMenu(item, touch.clientX, touch.clientY);
+        }, LONG_PRESS);
     }, {passive: true});
-    ['touchend', 'touchmove', 'touchcancel'].forEach((type) => modal.addEventListener(type, () => clearTimeout(pressTimer)));
-
-    modal.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && Object.values(menus).some((menu) => !menu.hidden)) {
-            // Esc закрывает меню, а не окно
-            event.stopPropagation();
-            closeMenus();
-            return;
+    ['touchend', 'touchmove', 'touchcancel'].forEach((type) => win.addEventListener(type, () => clearTimeout(pressTimer), {passive: true}));
+    win.addEventListener('click', (event) => {
+        if (isLongPress) {
+            isLongPress = false;
+            event.preventDefault();
+            event.stopImmediatePropagation();
         }
-        const card = event.target.closest?.('.file-card[data-fm-path]');
-        if (!card) {
-            return;
-        }
-        if (event.key === 'Enter') {
+    }, true);
+    // браузер тоже открывает меню по долгому нажатию (contextmenu): второй раз не перестраиваем
+    win.addEventListener('contextmenu', (event) => {
+        if (isLongPress) {
             event.preventDefault();
-            card.dataset.fmKind === 'dir' ? navigate(card.dataset.fmPath) : (state.selected = new Set([card.dataset.fmPath]), done());
-        } else if (event.key === 'Delete') {
-            event.preventDefault();
-            remove(state.selected.size ? state.items.filter((item) => state.selected.has(item.path)) : [getItem(card.dataset.fmPath)]);
-        } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-            event.preventDefault();
-            const rect = card.getBoundingClientRect();
-            openMenu(getItem(card.dataset.fmPath), rect.left + rect.width / 2, rect.bottom);
+            event.stopImmediatePropagation();
         }
     }, true);
 
-    // Enter в окне имени — сохранить
-    [renameModal, createModal].forEach((target) => {
-        target.addEventListener('click', (event) => {
-            const button = event.target.closest('[data-fm-action]');
-            if (button) {
-                runAction(button.dataset.fmAction, state.target);
-            }
-        });
-        target.querySelector('[data-fm-name]').addEventListener('keydown', (event) => {
+    // клавиатура по карточкам: стрелки, Enter, пробел, Delete, меню
+    win.addEventListener('keydown', (event) => {
+        const card = event.target.closest?.('.fm-card[data-fm-path]');
+        if (!card) {
+            return;
+        }
+        const path = card.dataset.fmPath;
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            card.dataset.fmKind === 'dir' ? navigate(path) : pick(path);
+        } else if (event.key === ' ') {
+            event.preventDefault();
+            toggleSelect(path);
+        } else if (event.key === 'Delete') {
+            event.preventDefault();
+            remove(state.selected.size ? selectedItems() : [getItem(path)]);
+        } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            const rect = card.getBoundingClientRect();
+            openItemMenu(getItem(path), rect.left + rect.width / 2, rect.bottom);
+        } else if (['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+            event.preventDefault();
+            const cards = [...filesElement.querySelectorAll('.fm-card[data-fm-path]')];
+            const index = cards.indexOf(card);
+            const columns = getComputedStyle(filesElement).gridTemplateColumns.split(' ').length;
+            const step = {ArrowRight: 1, ArrowLeft: -1, ArrowDown: columns, ArrowUp: -columns}[event.key];
+            cards[Math.max(0, Math.min(cards.length - 1, index + step))]?.focus();
+        }
+    });
+
+    // Tab попадает в список на выбранную или первую карточку
+    filesElement.tabIndex = 0;
+    filesElement.addEventListener('focus', () => {
+        (filesElement.querySelector('.fm-card[aria-selected="true"]') ?? filesElement.querySelector('.fm-card[data-fm-path]'))?.focus();
+    });
+
+    // мышь вне меню закрывает его
+    win.addEventListener('mousedown', (event) => {
+        if (!event.target.closest('[data-fm-menu], [data-fm-sort]')) {
+            closeMenus();
+        }
+    });
+
+    // окна имени: кнопка и Enter — сохранить
+    [[renameDialog, 'rename-save'], [createDialog, 'create-save']].forEach(([dialog, action]) => {
+        dialog.querySelector(`[data-fm-action="${action}"]`).addEventListener('click', () => runAction(action));
+        dialog.querySelector('[data-fm-name]').addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                runAction(target === renameModal ? 'rename-save' : 'create-save', state.target);
+                runAction(action);
             }
         });
     });
 
     searchInput.addEventListener('input', renderFiles);
-    sortInput.addEventListener('change', renderFiles);
     fileInput.addEventListener('change', () => {
-        upload([...fileInput.files]);
+        const path = state.uploadPath ?? state.path;
+        state.uploadPath = null;
+        upload([...fileInput.files], path);
         fileInput.value = '';
     });
-    dialog.addEventListener('scroll', closeMenus, true);
+    fileInput.addEventListener('cancel', () => {
+        state.uploadPath = null;
+    });
+    boardElement.addEventListener('scroll', () => {
+        closeMenus();
+        hideTip();
+    }, {passive: true});
+    window.addEventListener('resize', () => {
+        closeMenus();
+        hideTip();
+    });
+
+    // подсказка поиска — короче на телефоне (Figma: «Название файла»)
+    const mobile = window.matchMedia(MOBILE);
+    const searchPlaceholder = () => {
+        searchInput.placeholder = mobile.matches ? 'Название файла' : 'Введите название файла';
+    };
+    searchPlaceholder();
+    mobile.addEventListener('change', searchPlaceholder);
 
     // перетаскивание файлов в окно
     let dragDepth = 0;
     const hasFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes('Files');
-    dialog.addEventListener('dragenter', (event) => {
+    windowBox.addEventListener('dragenter', (event) => {
         if (hasFiles(event)) {
             dragDepth++;
             dropElement.hidden = false;
         }
     });
-    dialog.addEventListener('dragleave', () => {
+    windowBox.addEventListener('dragleave', () => {
         dragDepth = Math.max(0, dragDepth - 1);
-        dropElement.hidden = dragDepth > 0 ? dropElement.hidden : true;
+        if (!dragDepth) {
+            dropElement.hidden = true;
+        }
     });
-    dialog.addEventListener('dragover', (event) => {
+    windowBox.addEventListener('dragover', (event) => {
         if (hasFiles(event)) {
             event.preventDefault();
         }
     });
-    dialog.addEventListener('drop', (event) => {
+    windowBox.addEventListener('drop', (event) => {
         if (!hasFiles(event)) {
             return;
         }
@@ -732,32 +1618,79 @@ if (root && modal) {
         upload([...event.dataTransfer.files]);
     });
 
-    modal.addEventListener('modal:close', () => {
+    /* ---------- открытие и ответ вызвавшему ---------- */
+
+    /** Открытие окна (open): ответ ждёт ровно один — {onSelect, onCancel, resolve} */
+    let request = null;
+
+    /** Ответ на открытие: files — onSelect, null — onCancel; Promise open() получает то же */
+    const answer = (files) => {
+        const current = request;
+        request = null;
+        if (!current) {
+            return;
+        }
+        try {
+            if (files) {
+                current.onSelect?.(files);
+            } else {
+                current.onCancel?.();
+            }
+        } finally {
+            current.resolve(files);
+        }
+    };
+
+    // любое закрытие окна (крестик, Esc, подложка, close(), «Готово»): ответ вызвавшему
+    win.addEventListener('close', () => {
         closeMenus();
+        hideTip();
+        [renameDialog, createDialog, confirmDialog, compressDialog, moveDialog].forEach(hideDialog);
         state.added.clear();
         state.failed = [];
+        const files = state.result;
+        state.result = null;
+        answer(files);
     });
 
-    /* ---------- API ---------- */
-
-    const open = ({multiple = false, onSelect = null} = {}) => {
+    /**
+     * @param {{multiple?: boolean, accept?: string|string[]|null, onSelect?: Function|null, onCancel?: Function|null,
+     *     select?: boolean}} options
+     * @returns {Promise<Array<{path: string, url: string, name: string, isImage: boolean}>|null>}
+     */
+    const open = ({multiple = false, accept = null, onSelect = null, onCancel = null, select = Boolean(onSelect)} = {}) => {
+        // окно уже открыто другим вызовом: тот получает отмену
+        answer(null);
+        const promise = new Promise((resolve) => {
+            request = {onSelect, onCancel, resolve};
+        });
+        state.result = null;
         state.multiple = multiple;
-        state.onSelect = onSelect;
+        state.select = select;
+        state.accept = parseAccept(accept);
+        fileInput.accept = state.accept ? [...state.accept].map((extension) => '.' + extension).join(',') : '';
         state.selected.clear();
-        modal.classList.toggle('file-window_select', Boolean(onSelect));
-        window.SimflexModal.open(MODAL_ID);
+        windowBox.classList.toggle('fm-window_select', select);
+        // что сервер умеет сжимать — заранее: вопрос о сжатии при загрузке появляется сразу
+        getCompression();
+        const isOpen = win.open;
+        showDialog(win);
         if (!state.loaded) {
             state.loaded = true;
             navigate('');
             loadTree().catch(report);
         } else {
+            if (isOpen) {
+                renderFiles();
+            }
             refresh();
         }
+        return promise;
     };
 
     window.fileManager = {
         open,
-        close: () => window.SimflexModal.close(MODAL_ID),
+        close: () => hideDialog(win),
         // прежний вызов: один файл, callback получает путь от корня файлов
         init: (callback) => open({onSelect: callback ? (files) => callback(files[0].path) : null}),
     };

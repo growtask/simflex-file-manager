@@ -1,0 +1,1872 @@
+/*
+ * Файловый менеджер Simflex (Figma SimflexCMS, страница Way-File): свой слой интерфейса, независимый от админки,
+ * по образцу редактора texted. Окна — нативный <dialog> (верхний слой браузера: открытое последним всегда сверху),
+ * свои меню, подсказка, подтверждение и тосты. Цвета, скругления и тени — только токены --fm-* ниже: они берут
+ * переменные дизайн-системы Simflex (--color-*), а без них — значения из макета. Размеры — px макета (окно 920).
+ * Тема: data-fm-theme="dark" на корнях. Фокус-кольцо — только с клавиатуры (:focus-visible), поле — рамкой.
+ */
+
+/* ---------- токены ---------- */
+
+.fm-root {
+    --fm-black: var(--color-main-gray-black, #0d0d0d);
+    --fm-darker: var(--color-main-gray-darker, #262626);
+    --fm-dark: var(--color-main-gray-dark, #4d4d4d);
+    --fm-medium: var(--color-main-gray-medium, #919599);
+    --fm-light: var(--color-main-gray-light, #dadfe5);
+    --fm-lighter: var(--color-main-gray-lighter, #edf3fa);
+    --fm-white: var(--color-main-gray-white, #ffffff);
+    --fm-accent-darker: var(--color-main-color1-darker, #104fa6);
+    --fm-accent-dark: var(--color-main-color1-dark, #1461cc);
+    --fm-accent: var(--color-main-color1-main, #1975f7);
+    --fm-accent-light: var(--color-main-color1-light, #63a1f7);
+    --fm-accent-lighter: var(--color-main-color1-lighter, #d2e2f7);
+    --fm-error-dark: var(--color-states-error-dark, #cc2929);
+    --fm-error-medium: var(--color-states-error-medium, #ffa6a6);
+    --fm-success-dark: var(--color-states-success-dark, #0e8c0e);
+    --fm-disabled-medium: var(--color-states-disabled-medium, #c1c7cc);
+
+    /* роли */
+    --fm-bg: var(--fm-white);
+    --fm-text: var(--fm-darker);
+    --fm-icon: var(--fm-darker);
+    --fm-muted: var(--color-text-icon-gray-medium, #919599);
+    --fm-desc: var(--color-text-icon-gray-dark, #4d4d4d);
+    --fm-line: var(--fm-lighter);
+    --fm-field: var(--fm-lighter);
+    --fm-hover: var(--fm-lighter);
+    --fm-press: var(--fm-accent-lighter);
+    --fm-press-ring: transparent;
+    --fm-selected: var(--fm-accent-lighter);
+    --fm-current: var(--color-text-icon-color1-dark, #1461cc);
+    --fm-tool: var(--fm-white);
+    --fm-input-border: var(--fm-light);
+    --fm-pop: var(--fm-white);
+    --fm-pop-ring: transparent;
+    --fm-tip-bg: var(--fm-black);
+    --fm-tip-text: var(--fm-white);
+    --fm-toast-bg: var(--fm-black);
+    --fm-toast-text: var(--fm-white);
+    --fm-backdrop: rgba(13, 13, 13, 0.6);
+
+    --fm-radius-xs: 4px;
+    --fm-radius-s: 8px;
+    --fm-radius-m: 12px;
+    --fm-radius-l: 16px;
+    --fm-radius-xl: 24px;
+    --fm-radius-blocks: 32px;
+    --fm-shadow-s: 0 0 10px 2px rgba(13, 13, 13, 0.1);
+    --fm-shadow-m: 0 0 25px 5px rgba(13, 13, 13, 0.07);
+    --fm-shadow-l: 0 0 40px 5px rgba(13, 13, 13, 0.05);
+
+    --fm-font: var(--font-family-body, "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+    /* движение — как в texted (--ui-ease, --ui-ease-out), чуть дольше для окон и списка */
+    --fm-ease: cubic-bezier(0.14, 0.18, 0.16, 1.02);
+    --fm-ease-out: cubic-bezier(0.2, 0, 0, 1);
+    --fm-fast: 140ms;
+    --fm-base: 200ms;
+    --fm-slow: 260ms;
+
+    /* полосы прокрутки — Scrollbar/scrollbar дизайн-системы (как в texted): classic, без стрелок, 4 px */
+    --fm-sb-track: rgba(237, 243, 250, 0.2);
+    --fm-sb-track-active: rgba(237, 243, 250, 0.5);
+    --fm-sb-thumb: rgba(99, 161, 247, 0.2);
+    --fm-sb-thumb-hover: rgba(25, 117, 247, 0.5);
+    --fm-sb-thumb-press: rgba(20, 97, 204, 0.5);
+
+    font-family: var(--fm-font);
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--fm-text);
+    font-feature-settings: "lnum" 1, "pnum" 1;
+    -webkit-font-smoothing: antialiased;
+}
+
+.fm-root[data-fm-theme="dark"] {
+    --fm-sb-track: rgba(77, 77, 77, 0.2);
+    --fm-sb-track-active: rgba(77, 77, 77, 0.5);
+    --fm-sb-thumb: rgba(25, 117, 247, 0.2);
+    --fm-sb-thumb-hover: rgba(99, 161, 247, 0.5);
+    --fm-sb-thumb-press: rgba(210, 226, 247, 0.5);
+    --fm-bg: var(--fm-darker);
+    --fm-text: var(--fm-lighter);
+    --fm-icon: var(--fm-white);
+    --fm-desc: var(--fm-light);
+    --fm-line: var(--fm-dark);
+    --fm-field: var(--fm-dark);
+    --fm-hover: var(--fm-dark);
+    --fm-press: var(--fm-darker);
+    --fm-press-ring: var(--fm-dark);
+    --fm-selected: var(--fm-accent-darker);
+    --fm-current: var(--fm-accent-light);
+    --fm-tool: var(--fm-darker);
+    --fm-input-border: var(--fm-dark);
+    --fm-pop: var(--fm-darker);
+    --fm-pop-ring: var(--fm-dark);
+    --fm-tip-bg: var(--fm-light);
+    --fm-tip-text: var(--fm-darker);
+    --fm-toast-bg: var(--fm-light);
+    --fm-toast-text: var(--fm-darker);
+}
+
+/* сброс — без специфичности (:where): классы компонентов его перекрывают */
+:where(.fm-root) *,
+:where(.fm-root) *::before,
+:where(.fm-root) *::after {
+    box-sizing: border-box;
+}
+
+:where(.fm-root) :where(button) {
+    font: inherit;
+    color: inherit;
+    margin: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+:where(.fm-root) :where(button:disabled) {
+    cursor: default;
+}
+
+:where(.fm-root) :where(p) {
+    margin: 0;
+}
+
+/* фокус-кольцо — только с клавиатуры */
+:where(.fm-root) :where(:focus) {
+    outline: none;
+}
+
+:where(.fm-root) :where(:focus-visible) {
+    outline: 2px solid var(--fm-accent);
+    outline-offset: 0;
+}
+
+.fm-icon {
+    display: block;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    fill: currentColor;
+}
+
+.fm-icon_16 {
+    width: 16px;
+    height: 16px;
+}
+
+/* ---------- окно (<dialog>) ---------- */
+
+/* страница под окном не прокручивается */
+html:has(.fm-dialog[open]) {
+    overflow: hidden;
+}
+
+/* размер — по видимой области (100%, а не 100vw: без полосы прокрутки страницы) */
+/* размер — по видимой области вместе с отступами (отступ снизу — место экранной клавиатуры) */
+.fm-dialog {
+    box-sizing: border-box;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 16px;
+    border: 0;
+    background: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/*
+ * Открытие и закрытие — плавные в обе стороны: переход по display/overlay (allow-discrete) держит окно на экране,
+ * пока оно гаснет; @starting-style — исходное состояние при открытии. Без поддержки — мгновенно
+ */
+.fm-dialog:not([open]) {
+    display: none;
+}
+
+.fm-dialog {
+    transition: display var(--fm-slow) allow-discrete, overlay var(--fm-slow) allow-discrete;
+}
+
+.fm-dialog::backdrop {
+    background: transparent;
+    transition: background-color var(--fm-slow) var(--fm-ease), display var(--fm-slow) allow-discrete,
+        overlay var(--fm-slow) allow-discrete;
+}
+
+.fm-dialog[open]::backdrop {
+    background: var(--fm-backdrop);
+}
+
+.fm-dialog > .fm-dialog__box {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+    transition: opacity var(--fm-slow) var(--fm-ease-out), transform var(--fm-slow) var(--fm-ease-out);
+}
+
+.fm-dialog[open] > .fm-dialog__box {
+    opacity: 1;
+    transform: none;
+}
+
+@starting-style {
+    .fm-dialog[open]::backdrop {
+        background: transparent;
+    }
+
+    .fm-dialog[open] > .fm-dialog__box {
+        opacity: 0;
+        transform: translateY(12px) scale(0.98);
+    }
+}
+
+@keyframes fm-fade {
+    from {
+        opacity: 0;
+    }
+}
+
+/* ---------- кнопка-иконка (Figma file-tool на Tabs/main soft) ---------- */
+
+.fm-tool {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    padding: 8px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-tool);
+    color: var(--fm-icon);
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-tool:hover {
+    background: var(--fm-hover);
+}
+
+.fm-tool:active,
+.fm-tool[aria-current="true"],
+.fm-tool[aria-expanded="true"] {
+    background: var(--fm-press);
+    box-shadow: inset 0 0 0 2px var(--fm-press-ring);
+}
+
+.fm-tool:disabled {
+    background: var(--fm-tool);
+    opacity: 0.4;
+}
+
+/* «Удалить папку»: значок красный (Figma), в корне недоступна */
+.fm-tool[data-fm-delete-folder] .fm-icon {
+    color: var(--fm-error-medium);
+}
+
+/* ---------- кнопки Buttons/main ---------- */
+
+.fm-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 8px 16px 8px 12px;
+    border-radius: var(--fm-radius-m);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    transition: background-color var(--fm-fast) var(--fm-ease), transform var(--fm-fast) var(--fm-ease);
+}
+
+.fm-button:active:not(:disabled) {
+    transform: scale(0.97);
+}
+
+.fm-button_primary {
+    background: var(--fm-accent);
+    color: var(--fm-white);
+}
+
+.fm-button_primary:hover {
+    background: var(--fm-accent-dark);
+}
+
+.fm-button_primary:active {
+    background: var(--fm-accent-darker);
+}
+
+.fm-button_primary:disabled {
+    background: var(--fm-disabled-medium);
+    color: var(--fm-white);
+}
+
+.fm-button_gray {
+    background: var(--fm-field);
+    color: var(--fm-text);
+}
+
+.fm-button_gray:hover {
+    background: var(--fm-accent-lighter);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-button_gray:hover {
+    background: var(--fm-medium);
+}
+
+/* большая кнопка окна (Figma Modal/main footer) */
+.fm-button_l {
+    flex: 1 1 0;
+    min-height: 56px;
+    padding: 16px 20px;
+    font-size: 16px;
+}
+
+/* ---------- окно менеджера ---------- */
+
+.fm-window {
+    display: flex;
+    flex-direction: column;
+    width: 920px;
+    max-width: 100%;
+    height: 562px;
+    max-height: 100%;
+    overflow: hidden;
+    background: var(--fm-bg);
+    border: 1px solid var(--fm-line);
+    border-radius: var(--fm-radius-l);
+    box-shadow: var(--fm-shadow-l);
+}
+
+.fm-window__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--fm-line);
+}
+
+.fm-crumbs {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.fm-crumbs__home {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--fm-radius-s);
+    background: var(--fm-field);
+}
+
+.fm-crumbs__list {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.fm-crumbs__sep {
+    padding: 6px 4px;
+    color: var(--fm-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.fm-crumbs__item {
+    flex-shrink: 0;
+    max-width: 200px;
+    overflow: hidden;
+    padding: 4px 0;
+    border-radius: var(--fm-radius-xs);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fm-text);
+    transition: color var(--fm-fast) var(--fm-ease);
+}
+
+button.fm-crumbs__item:hover {
+    color: var(--fm-accent);
+}
+
+.fm-crumbs__item[aria-current="page"] {
+    color: var(--fm-current);
+}
+
+.fm-window__body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.fm-side {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 220px;
+    border-right: 1px solid var(--fm-line);
+}
+
+.fm-tools {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    background: var(--fm-field);
+}
+
+/* ---------- дерево (Figma file-tree-row) ---------- */
+
+.fm-tree {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 4px;
+}
+
+.fm-tree ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.fm-tree-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 4px 8px 4px calc(8px + var(--depth, 0) * 16px);
+    font-size: 11px;
+    line-height: 1.45;
+    text-align: left;
+    color: var(--fm-text);
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-tree-row:hover {
+    background: var(--fm-hover);
+}
+
+.fm-tree-row:active {
+    background: var(--fm-press);
+}
+
+.fm-tree-row[aria-current="true"] {
+    background: var(--fm-hover);
+    color: var(--fm-current);
+}
+
+.fm-tree-row__toggle {
+    display: flex;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--fm-radius-xs);
+    color: var(--fm-icon);
+    transition: transform 0.22s var(--fm-ease);
+}
+
+.fm-tree-row[aria-expanded="true"] .fm-tree-row__toggle {
+    transform: rotate(90deg);
+}
+
+.fm-tree-row__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- панель поиска и сортировки ---------- */
+
+.fm-main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.fm-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+}
+
+.fm-search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    height: 40px;
+    padding: 0 8px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-field);
+    color: var(--fm-muted);
+}
+
+.fm-search__input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0 4px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--fm-text);
+}
+
+.fm-search__input::placeholder {
+    color: var(--fm-muted);
+}
+
+.fm-search__input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.fm-search__input:focus-visible {
+    outline: none;
+}
+
+.fm-search:focus-within {
+    box-shadow: inset 0 0 0 2px var(--fm-accent);
+}
+
+.fm-toolbar__line {
+    flex-shrink: 0;
+    width: 1px;
+    height: 24px;
+    background: var(--fm-line);
+}
+
+.fm-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 40px;
+    padding: 8px 8px 8px 12px;
+    border-radius: var(--fm-radius-m);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-sort:hover,
+.fm-sort[aria-expanded="true"] {
+    background: var(--fm-hover);
+}
+
+.fm-sort .fm-icon {
+    transition: transform 0.22s var(--fm-ease);
+}
+
+.fm-sort[aria-expanded="true"] .fm-icon {
+    transform: rotate(180deg);
+}
+
+/* ---------- сетка карточек (Figma file-card) ---------- */
+
+.fm-board {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 12px 12px;
+}
+
+.fm-files {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px 11px;
+    align-content: start;
+}
+
+.fm-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px;
+    border-radius: var(--fm-radius-m);
+    text-align: left;
+    user-select: none;
+    /* долгое нажатие — меню менеджера, а не системное меню картинки или выделение (iOS) */
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--fm-fast) var(--fm-ease), box-shadow var(--fm-fast) var(--fm-ease);
+}
+
+.fm-card:hover {
+    box-shadow: inset 0 0 0 2px var(--fm-hover);
+}
+
+.fm-card:active {
+    background: var(--fm-hover);
+}
+
+.fm-card[aria-selected="true"] {
+    background: var(--fm-selected);
+    box-shadow: none;
+}
+
+/* превью: скругление внутри карточки = скругление карточки − отступ (12 − 8), углы идут ровно */
+.fm-card__preview {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--fm-radius-xs);
+    background: var(--fm-field);
+    color: var(--fm-accent-dark);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-card__preview {
+    color: var(--fm-accent-light);
+}
+
+/* тёмная тема (Figma): плашка веса тёмная, имя выбранного — белое */
+.fm-root[data-fm-theme="dark"] .fm-card__badge {
+    background: var(--fm-darker);
+    color: var(--fm-accent-light);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-card[aria-selected="true"] .fm-card__name {
+    color: var(--fm-white);
+}
+
+.fm-card__preview > .fm-icon {
+    width: 48px;
+    height: 48px;
+}
+
+.fm-card__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.fm-card__badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 3px 8px;
+    border-radius: 120px;
+    background: var(--fm-white);
+    color: var(--fm-accent-dark);
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: nowrap;
+}
+
+/* галочка выбора (Figma file-card selected): при наведении и когда отмечено несколько; один выбранный — без неё (active) */
+.fm-card__check {
+    position: absolute;
+    z-index: 1;
+    /* в углу превью: отступ карточки 8 + отступ от края превью 8 */
+    top: 16px;
+    left: 16px;
+    display: flex;
+    padding: 0;
+    border-radius: 6px;
+    background: var(--fm-white);
+    color: var(--fm-muted);
+    opacity: 0;
+    transition: opacity var(--fm-fast) var(--fm-ease);
+}
+
+.fm-card__check:hover {
+    color: var(--fm-accent);
+}
+
+.fm-card:hover .fm-card__check,
+.fm-card:focus-visible .fm-card__check,
+.fm-files_multi .fm-card__check {
+    opacity: 1;
+}
+
+.fm-files_multi .fm-card[aria-selected="true"] .fm-card__check {
+    color: var(--fm-accent);
+}
+
+.fm-card__name {
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1.5;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fm-card[aria-selected="true"] .fm-card__name {
+    color: var(--fm-current);
+}
+
+.fm-card__date,
+.fm-card__weight {
+    display: none;
+}
+
+.fm-card_new .fm-card__name {
+    color: var(--fm-success-dark);
+}
+
+.fm-card_uploading,
+.fm-card_disabled,
+.fm-card_error {
+    cursor: default;
+}
+
+.fm-card_uploading .fm-card__preview > :not(.fm-spinner) {
+    opacity: 0.5;
+}
+
+.fm-card_uploading .fm-card__name,
+.fm-card_disabled .fm-card__name {
+    color: var(--fm-muted);
+}
+
+.fm-card_disabled .fm-card__preview {
+    opacity: 0.5;
+}
+
+.fm-card_disabled:hover,
+.fm-card_disabled:active {
+    background: none;
+    box-shadow: none;
+}
+
+.fm-card_error .fm-card__preview {
+    color: var(--fm-error-medium);
+}
+
+.fm-card_error .fm-card__name {
+    color: var(--fm-error-dark);
+}
+
+.fm-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--fm-accent-lighter);
+    border-top-color: var(--fm-accent);
+    border-radius: 50%;
+    animation: fm-spin 0.8s linear infinite;
+}
+
+@keyframes fm-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* загрузка папки и пустое состояние — поверх сетки, без прыжков */
+/* Figma states/empty: серый маркер (disabled) со значком file-search, заголовок h4, текст */
+.fm-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    text-align: center;
+    pointer-events: none;
+}
+
+.fm-state[hidden] {
+    display: none;
+}
+
+.fm-state__marker {
+    display: flex;
+    margin-bottom: 12px;
+    padding: 16px;
+    border-radius: var(--fm-radius-m);
+    background: var(--color-states-disabled-light, #dfe4eb);
+    color: var(--color-states-disabled-dark, #616466);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-state__marker {
+    background: var(--fm-dark);
+    color: var(--fm-light);
+}
+
+.fm-state__title {
+    max-width: 382px;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.fm-state__text {
+    max-width: 382px;
+    color: var(--fm-desc);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+.fm-info__empty {
+    color: var(--fm-muted);
+}
+
+.fm-loading {
+    opacity: 0;
+    animation: fm-fade-in var(--fm-base) var(--fm-ease) 150ms forwards;
+}
+
+@keyframes fm-fade-in {
+    to {
+        opacity: 1;
+    }
+}
+
+/* ---------- нижняя панель ---------- */
+
+.fm-bottom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 56px;
+    padding: 8px;
+    background: var(--fm-field);
+}
+
+.fm-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.fm-info__name {
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1.5;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fm-info__meta {
+    color: var(--fm-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre;
+}
+
+.fm-window:not(.fm-window_select) .fm-done {
+    display: none;
+}
+
+/* ---------- перетаскивание файлов ---------- */
+
+.fm-drop {
+    position: absolute;
+    inset: 8px;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 2px dashed var(--fm-accent-light);
+    border-radius: var(--fm-radius-m);
+    background: color-mix(in srgb, var(--fm-bg) 90%, transparent);
+    color: var(--fm-current);
+    font-size: 14px;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.fm-drop[hidden] {
+    display: none;
+}
+
+.fm-drop .fm-icon {
+    width: 48px;
+    height: 48px;
+}
+
+/* ---------- всплывающие меню (Figma file-menu на Dropdown/main) ---------- */
+
+.fm-pop {
+    position: fixed;
+    z-index: 10;
+    width: 240px;
+    filter: drop-shadow(0 0 12.5px rgba(13, 13, 13, 0.07));
+    animation: fm-pop-in 160ms var(--fm-ease);
+}
+
+.fm-pop[hidden] {
+    display: none;
+}
+
+.fm-pop_sort {
+    width: 200px;
+}
+
+@keyframes fm-pop-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.98);
+    }
+}
+
+.fm-pop__corner {
+    display: block;
+    width: 8px;
+    height: 4px;
+    margin-left: var(--corner-x, 24px);
+    background: var(--fm-pop);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.fm-pop_up .fm-pop__corner {
+    display: none;
+}
+
+.fm-pop__box {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 12px;
+    border-radius: var(--fm-radius-xl);
+    background: var(--fm-pop);
+    box-shadow: inset 0 0 0 2px var(--fm-pop-ring);
+}
+
+.fm-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 8px;
+    border-radius: var(--fm-radius-m);
+    text-align: left;
+    color: var(--fm-icon);
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-item:hover,
+.fm-item.is-focus {
+    background: var(--fm-hover);
+}
+
+.fm-item:active,
+.fm-item[aria-checked="true"] {
+    background: var(--fm-press);
+    box-shadow: inset 0 0 0 2px var(--fm-press-ring);
+}
+
+.fm-item__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 24px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fm-text);
+}
+
+.fm-item_danger .fm-icon {
+    color: var(--fm-error-medium);
+}
+
+.fm-pop__line {
+    flex-shrink: 0;
+    height: 1px;
+    margin: 0;
+    background: var(--fm-line);
+}
+
+/* ---------- подсказка (Figma Tooltip/main) ---------- */
+
+.fm-tip {
+    position: fixed;
+    z-index: 20;
+    max-width: 240px;
+    pointer-events: none;
+    filter: drop-shadow(0 0 5px rgba(13, 13, 13, 0.1));
+    opacity: 0;
+    transform: translateY(-3px);
+    transition: opacity 80ms ease-out, transform 80ms ease-out;
+}
+
+.fm-tip.is-visible {
+    opacity: 1;
+    transform: none;
+    transition-duration: 140ms;
+}
+
+.fm-tip__corner {
+    display: block;
+    width: 8px;
+    height: 4px;
+    margin-left: var(--corner-x, 16px);
+    background: var(--fm-tip-bg);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.fm-tip__body {
+    padding: 12px 16px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-tip-bg);
+    color: var(--fm-tip-text);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+/* ---------- окна действий (Figma file-modal на Modal/main) ---------- */
+
+.fm-modal {
+    position: relative;
+    width: 480px;
+    max-width: calc(100% - 60px);
+}
+
+.fm-modal__box {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 32px;
+    border-radius: var(--fm-radius-blocks);
+    background: var(--fm-bg);
+    box-shadow: var(--fm-shadow-l);
+}
+
+.fm-modal__head {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.fm-modal__title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.fm-modal__text {
+    color: var(--fm-desc);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+/* ссылки на файл есть на страницах: после удаления или переименования перестанут работать */
+.fm-modal__warning {
+    padding: 12px 16px;
+    border-radius: var(--fm-radius-m);
+    background: color-mix(in srgb, var(--fm-error-medium) 25%, transparent);
+    color: var(--fm-error-dark);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.fm-root[data-fm-theme="dark"] .fm-modal__warning {
+    color: var(--fm-error-medium);
+}
+
+.fm-modal__warning[hidden] {
+    display: none;
+}
+
+.fm-modal__close {
+    position: absolute;
+    top: 0;
+    left: calc(100% + 12px);
+    width: 48px;
+    height: 48px;
+    padding: 12px;
+    border-radius: 50%;
+    background: var(--fm-black);
+    color: var(--fm-white);
+    transition: transform var(--fm-fast) var(--fm-ease);
+}
+
+.fm-modal__close:active {
+    transform: scale(0.94);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-modal__close {
+    background: var(--fm-white);
+    color: var(--fm-black);
+}
+
+.fm-modal__footer {
+    display: flex;
+    gap: 12px;
+}
+
+/* поле form-input: название, поле Inputs/main outline, подсказка */
+.fm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.fm-field__label {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.fm-field__input {
+    width: 100%;
+    height: 48px;
+    padding: 0 16px;
+    border: 2px solid var(--fm-input-border);
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-bg);
+    font: inherit;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--fm-text);
+    transition: border-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-field__input::placeholder {
+    color: var(--fm-muted);
+}
+
+.fm-field__input:hover:not(:disabled) {
+    border-color: var(--fm-medium);
+}
+
+/* фокус поля — рамкой (как в texted), без кольца и при клике мышью */
+.fm-field__input:focus,
+.fm-field__input:focus-visible {
+    outline: none;
+    border-color: var(--fm-accent);
+}
+
+.fm-field__input:disabled {
+    color: var(--fm-muted);
+}
+
+.fm-field__hint {
+    color: var(--fm-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ---------- тосты ---------- */
+
+.fm-toasts {
+    position: fixed;
+    inset: auto 0 24px;
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+}
+
+.fm-toasts:not(:popover-open) {
+    display: none;
+}
+
+.fm-toast {
+    max-width: min(480px, calc(100vw - 24px));
+    padding: 8px 12px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-toast-bg);
+    color: var(--fm-toast-text);
+    box-shadow: var(--fm-shadow-s);
+    font-size: 13px;
+    line-height: 1.5;
+    pointer-events: auto;
+    animation: fm-toast-in 200ms var(--fm-ease);
+}
+
+/* Figma Feedback/toast success: «Файлы загружены» — зелёный */
+.fm-toast_success {
+    background: var(--fm-success-dark);
+    color: var(--fm-white);
+}
+
+.fm-toast_error {
+    background: var(--fm-error-dark);
+    color: var(--fm-white);
+}
+
+.fm-toast.is-closing {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+@keyframes fm-toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}
+
+/* ---------- нижняя панель телефона (Figma file-tabbar-item) ---------- */
+
+.fm-tabbar {
+    display: none;
+}
+
+/* ---------- планшет и телефон: список без дерева, нижняя панель ---------- */
+
+@media (max-width: 811px) {
+    .fm-dialog_window {
+        padding: 0;
+    }
+
+    /* Figma file-window mobile: шапка и панель поиска с отступом 12, у сортировки нет разделителя */
+    .fm-window__head {
+        padding: 8px 12px;
+    }
+
+    .fm-toolbar__line {
+        display: none;
+    }
+
+    .fm-window {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .fm-side,
+    .fm-bottom {
+        display: none;
+    }
+
+    .fm-crumbs__item {
+        max-width: 140px;
+    }
+
+    .fm-board {
+        padding: 0 0 12px;
+    }
+
+    .fm-files {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+    }
+
+    .fm-card {
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr) auto;
+        grid-template-areas: "preview name name" "preview date weight";
+        /* Figma file-card-mobile: превью и текст через 8, имя и дата через 4 */
+        column-gap: 8px;
+        row-gap: 4px;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--fm-line);
+        border-radius: 0;
+    }
+
+    .fm-card:hover {
+        box-shadow: none;
+    }
+
+    .fm-card__preview {
+        grid-area: preview;
+        width: 40px;
+        height: 40px;
+        border-radius: var(--fm-radius-s);
+    }
+
+    .fm-card__preview > .fm-icon {
+        width: 24px;
+        height: 24px;
+    }
+
+    .fm-card__badge {
+        display: none;
+    }
+
+    /* Figma file-card-mobile: выбранная строка — светлая заливка, имя обычным цветом */
+    .fm-card[aria-selected="true"] {
+        background: var(--fm-hover);
+    }
+
+    .fm-card[aria-selected="true"] .fm-card__name {
+        color: var(--fm-text);
+    }
+
+    /* галочка — только у отмеченных, когда отмечено несколько: слева от превью */
+    .fm-card__check {
+        display: none;
+        position: static;
+        grid-area: check;
+        background: none;
+        opacity: 1;
+    }
+
+    .fm-files_multi .fm-card[aria-selected="true"] {
+        grid-template-columns: 24px 40px minmax(0, 1fr) auto;
+        grid-template-areas: "check preview name name" "check preview date weight";
+    }
+
+    .fm-files_multi .fm-card[aria-selected="true"] .fm-card__check {
+        display: flex;
+    }
+
+    .fm-card__name {
+        grid-area: name;
+    }
+
+    .fm-card__date,
+    .fm-card__weight {
+        display: block;
+        color: var(--fm-muted);
+        font-size: 11px;
+        line-height: 1.45;
+    }
+
+    .fm-card__date {
+        grid-area: date;
+    }
+
+    .fm-card__weight {
+        grid-area: weight;
+        text-align: right;
+    }
+
+    /* Figma file-tabbar-item: светлая панель, тёмные значки */
+    .fm-tabbar {
+        display: flex;
+        gap: 4px;
+        padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+        background: var(--fm-field);
+    }
+
+    /* Figma file-tabbar-item: 52 в высоту, значок 24, подпись ui/xs серым */
+    .fm-tabbar__item {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        min-width: 0;
+        height: 52px;
+        padding: 4px 0;
+        border-radius: var(--fm-radius-s);
+        color: var(--fm-icon);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.4;
+    }
+
+    .fm-tabbar__item span {
+        color: var(--fm-muted);
+    }
+
+    .fm-tabbar__item:active {
+        background: var(--fm-press);
+    }
+
+    /* тосты — над нижней панелью (68) с отступом 20, на всю ширину (Figma file-screen-mobile-toast) */
+    .fm-toasts {
+        right: 12px;
+        bottom: calc(88px + env(safe-area-inset-bottom));
+        left: 12px;
+        align-items: stretch;
+    }
+
+    .fm-toast {
+        max-width: none;
+    }
+
+    .fm-tabbar__item:disabled {
+        opacity: 0.4;
+    }
+
+    .fm-window:not(.fm-window_select) .fm-tabbar__item[data-fm-action="done"] {
+        display: none;
+    }
+
+    /* шторка снизу; при экранной клавиатуре — над ней */
+    .fm-dialog_modal {
+        align-items: flex-end;
+        padding: 0 0 var(--fm-keyboard, 0px);
+    }
+
+    /* шторка выезжает снизу и уезжает вниз */
+    .fm-dialog_modal > .fm-dialog__box {
+        opacity: 1;
+        transform: translateY(100%);
+    }
+
+    .fm-dialog_modal[open] > .fm-dialog__box {
+        transform: none;
+    }
+
+    @starting-style {
+        .fm-dialog_modal[open] > .fm-dialog__box {
+            opacity: 1;
+            transform: translateY(100%);
+        }
+    }
+
+    .fm-modal {
+        width: 100%;
+        max-width: none;
+    }
+
+    /* Figma file-modal mobile: шторка снизу без скругления, сверху полоса с крестиком и линией */
+    .fm-modal__box {
+        max-height: calc(100dvh - 24px - var(--fm-keyboard, 0px));
+        /* Figma file-modal mobile: шапка 64 с крестиком, линия 2 с отступами 8, содержимое 20 / 16 / 70 */
+        padding: 86px 16px calc(70px + env(safe-area-inset-bottom));
+        border-radius: 0;
+        background:
+            linear-gradient(var(--fm-line), var(--fm-line)) 8px 64px / calc(100% - 16px) 2px no-repeat,
+            var(--fm-bg);
+    }
+
+    .fm-modal__title {
+        font-size: 20px;
+    }
+
+    .fm-modal__close {
+        top: 8px;
+        right: 8px;
+        left: auto;
+        width: 48px;
+        height: 48px;
+        padding: 12px;
+        border-radius: var(--fm-radius-m);
+        background: var(--fm-field);
+        color: var(--fm-icon);
+    }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fm-root *,
+    .fm-root *::before,
+    .fm-root *::after,
+    .fm-dialog::backdrop {
+        animation-duration: 1ms !important;
+        transition-duration: 1ms !important;
+    }
+}
+
+/* телефон (Figma nav/breadcrumbs mobile): только родительская и текущая папки */
+@media (max-width: 599px) {
+    .fm-crumbs__list > :nth-last-child(n + 5) {
+        display: none;
+    }
+}
+
+/* сенсорный экран без наведения (планшет в сетке): галочки видны сразу, касание не оставляет рамку наведения */
+@media (hover: none) and (min-width: 812px) {
+    .fm-card__check {
+        opacity: 1;
+    }
+
+    .fm-card:hover {
+        box-shadow: none;
+    }
+}
+
+/* ---------- полосы прокрутки (Figma Scrollbar/scrollbar, как в texted) ---------- */
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-button {
+    display: none;
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-track {
+    border-radius: 9999px;
+    background: var(--fm-sb-track);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-track:hover {
+    background: var(--fm-sb-track-active);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: var(--fm-sb-thumb);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb:hover {
+    background: var(--fm-sb-thumb-hover);
+}
+
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb:active {
+    background: var(--fm-sb-thumb-press);
+}
+
+/* Firefox: только цвета покоя (наведение и нажатие браузер не поддерживает) */
+@supports not selector(::-webkit-scrollbar) {
+    .fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list) {
+        scrollbar-width: thin;
+        scrollbar-color: var(--fm-sb-thumb) var(--fm-sb-track);
+    }
+}
+
+/* ---------- режим отметки: внизу слева вместо кнопок папки — «Отменить выбор» ---------- */
+
+.fm-tools__cancel {
+    display: none;
+    flex: 1;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--fm-tool);
+}
+
+.fm-tools__cancel:hover {
+    background: var(--fm-accent-lighter);
+}
+
+.fm-window_checking .fm-tools > .fm-tool {
+    display: none;
+}
+
+.fm-window_checking .fm-tools__cancel {
+    display: inline-flex;
+    animation: fm-swap var(--fm-base) var(--fm-ease-out);
+}
+
+.fm-tools > .fm-tool {
+    animation: fm-swap var(--fm-base) var(--fm-ease-out);
+}
+
+@keyframes fm-swap {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+}
+
+/* ---------- список: карточки появляются мягко, с небольшой очередью ---------- */
+
+.fm-files_in > .fm-card {
+    animation: fm-card-in var(--fm-slow) var(--fm-ease-out) both;
+    animation-delay: calc(min(var(--i, 0), 12) * 18ms);
+}
+
+@keyframes fm-card-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+}
+
+/* раскрытая ветка дерева */
+.fm-tree__group_in {
+    animation: fm-card-in var(--fm-base) var(--fm-ease-out);
+}
+
+/* меню закрывается плавно */
+.fm-pop.is-closing {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.99);
+    transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+/* галочка появляется с лёгким увеличением */
+.fm-card__check {
+    transform: scale(0.85);
+    transition: opacity var(--fm-base) var(--fm-ease-out), transform var(--fm-base) var(--fm-ease-out);
+}
+
+.fm-card:hover .fm-card__check,
+.fm-card:focus-visible .fm-card__check,
+.fm-files_multi .fm-card__check {
+    transform: none;
+}
+
+/* ---------- окно «Сжать перед загрузкой?» ---------- */
+
+.fm-compress {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.fm-compress__item {
+    padding: 12px 16px;
+    border-radius: var(--fm-radius-m);
+    background: var(--fm-field);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* флажок (Switches/check-box): квадрат 20 со скруглением, отметка — цветом акцента */
+.fm-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fm-desc);
+    cursor: pointer;
+    user-select: none;
+}
+
+.fm-check__input {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--fm-accent);
+    cursor: pointer;
+}
+
+/* «Выбрать» в меню — только на сенсорных и узких экранах (на компьютере — галочка при наведении) */
+.fm-item_touch {
+    display: none;
+}
+
+@media (max-width: 811px), (hover: none) {
+    .fm-item_touch {
+        display: flex;
+    }
+}
+
+/* нижняя панель телефона в режиме отметки: «Отменить», «Удалить», «Готово» */
+.fm-tabbar__item_check {
+    display: none;
+}
+
+@media (max-width: 811px) {
+    .fm-window_checking .fm-tabbar__item:not(.fm-tabbar__item_check) {
+        display: none;
+    }
+
+    .fm-window_checking .fm-tabbar__item_check {
+        display: flex;
+        animation: fm-swap var(--fm-base) var(--fm-ease-out);
+    }
+
+    .fm-window:not(.fm-window_select) .fm-tabbar__item_check[data-fm-action="done"] {
+        display: none;
+    }
+
+    .fm-tabbar__item_danger .fm-icon {
+        color: var(--fm-error-medium);
+    }
+}
+
+/* ---------- окно «Переместить»: папка назначения выбирается пошагово ---------- */
+
+#sf-file-manager-move .fm-modal {
+    width: 520px;
+}
+
+.fm-move {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--fm-line);
+    border-radius: var(--fm-radius-l);
+}
+
+.fm-move__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--fm-line);
+}
+
+.fm-move__back {
+    flex-shrink: 0;
+}
+
+.fm-move__back:disabled {
+    opacity: 0.4;
+}
+
+.fm-move__path {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+
+.fm-move__crumb {
+    flex-shrink: 0;
+    padding: 2px 4px;
+    border-radius: var(--fm-radius-xs);
+    color: var(--fm-desc);
+    transition: background-color var(--fm-fast) var(--fm-ease), color var(--fm-fast) var(--fm-ease);
+}
+
+button.fm-move__crumb:hover {
+    background: var(--fm-hover);
+    color: var(--fm-text);
+}
+
+.fm-move__crumb[aria-current] {
+    color: var(--fm-current);
+    font-weight: 600;
+}
+
+.fm-move__sep {
+    color: var(--fm-muted);
+}
+
+.fm-move__here {
+    flex-shrink: 0;
+    margin-left: 4px;
+    padding: 2px 8px;
+    border-radius: var(--fm-radius-s);
+    background: var(--fm-field);
+    color: var(--fm-muted);
+    font-size: 12px;
+}
+
+.fm-move__list {
+    height: 280px;
+    padding: 4px;
+    overflow-y: auto;
+    transition: opacity var(--fm-fast) var(--fm-ease);
+}
+
+/* пока грузится уровень, прежний список не нажимается */
+.fm-move__list.is-loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.fm-move__list_in > * {
+    animation: fm-move-in var(--fm-base) var(--fm-ease-out) both;
+}
+
+@keyframes fm-move-in {
+    from {
+        opacity: 0;
+        transform: translateX(8px);
+    }
+}
+
+.fm-move__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: var(--fm-radius-m);
+    font-size: 14px;
+    line-height: 1.5;
+    text-align: left;
+    color: var(--fm-text);
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-move__row:hover:not(:disabled) {
+    background: var(--fm-hover);
+}
+
+.fm-move__row:active:not(:disabled) {
+    background: var(--fm-press);
+}
+
+.fm-move__row:disabled {
+    color: var(--fm-muted);
+    cursor: default;
+}
+
+.fm-move__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fm-move__arrow {
+    color: var(--fm-muted);
+}
+
+.fm-move__note {
+    font-size: 12px;
+}
+
+.fm-move__empty {
+    padding: 48px 16px;
+    color: var(--fm-muted);
+    font-size: 14px;
+    text-align: center;
+}
+
+/* «Новая папка» — квадратная кнопка со значком, подпись для чтения с экрана */
+.fm-move__create {
+    flex: 0 0 56px;
+    padding: 16px;
+}
+
+.fm-move__create > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
+@media (max-width: 811px) {
+    .fm-move__list {
+        height: min(320px, 40dvh);
+    }
+}
