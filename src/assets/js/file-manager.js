@@ -117,8 +117,9 @@ if (root && win) {
     const createDialog = document.getElementById('sf-file-manager-create');
     const confirmDialog = document.getElementById('sf-file-manager-confirm');
     const compressDialog = document.getElementById('sf-file-manager-compress');
+    const moveDialog = document.getElementById('sf-file-manager-move');
     const toastsElement = root.querySelector('[data-fm-toasts]');
-    const dialogs = [win, renameDialog, createDialog, confirmDialog, compressDialog];
+    const dialogs = [win, renameDialog, createDialog, confirmDialog, compressDialog, moveDialog];
     const menus = {};
     win.querySelectorAll('[data-fm-menu]').forEach((menu) => {
         menus[menu.dataset.fmMenu] = menu;
@@ -428,14 +429,17 @@ if (root && win) {
 
     /** Запрос к API: изменяющие — POST с CSRF-токеном */
     const call = async (method, params = {}, files = null, signal = undefined) => {
-        const isModifying = ['delete', 'createDir', 'rename', 'upload'].includes(method);
+        const isModifying = ['delete', 'createDir', 'rename', 'move', 'upload'].includes(method);
         let url = `${api}?method=${method}`;
         let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}, signal};
         if (isModifying) {
             // CSRF-токен сессии админки: без него сервер изменяющий запрос не принимает
             options.headers['X-CSRF-Token'] = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
             const body = new FormData();
-            Object.entries(params).forEach(([key, value]) => body.append(key, value));
+            // список — как key[] (PHP соберёт массив)
+            Object.entries(params).forEach(([key, value]) => (Array.isArray(value)
+                ? value.forEach((part) => body.append(`${key}[]`, part))
+                : body.append(key, value)));
             (files ?? []).forEach((file) => body.append('file[]', file));
             // путь — и в адресе: Manager читает $_REQUEST, а размер тела проверяет до разбора
             url += `&path=${encodeURIComponent(params.path ?? '')}`;
@@ -669,7 +673,8 @@ if (root && win) {
         }
         const isSelected = state.selected.has(path);
         card.setAttribute('aria-selected', String(isSelected));
-        card.querySelector('.fm-card__check use')?.setAttribute('href', `${sprite}#fm-checkbox-${isSelected ? 'on' : 'off'}`);
+        // галочка стоит только в режиме отметки: одиночный выбор кликом её не ставит
+        card.querySelector('.fm-card__check use')?.setAttribute('href', `${sprite}#fm-checkbox-${isSelected && state.checking ? 'on' : 'off'}`);
     };
 
     const updateSelection = () => {
@@ -824,8 +829,19 @@ if (root && win) {
         updateSelection();
     };
 
-    const toggleSelect = (path) => {
+    /**
+     * Отметить или снять отметку. Вне режима отметки галочка пустая и у выбранного кликом файла — нажатие на неё
+     * отмечает этот файл (а не снимает выбор) и включает режим; Ctrl/⌘ (keep) оставляет и выбранный кликом
+     */
+    const toggleSelect = (path, {keep = false} = {}) => {
         if (!isAccepted(getItem(path))) {
+            return;
+        }
+        if (!state.checking) {
+            state.selected = new Set(keep ? [...state.selected, path] : [path]);
+            state.anchor = path;
+            state.checking = true;
+            updateSelection();
             return;
         }
         state.selected.has(path) ? state.selected.delete(path) : state.selected.add(path);
@@ -934,8 +950,13 @@ if (root && win) {
                 }
                 toast(target.type === 'dir' ? 'Папка переименована' : 'Файл переименован');
             } else {
-                await call('createDir', {path: target?.path ?? state.path, name});
+                const parent = target?.path ?? state.path;
+                await call('createDir', {path: parent, name});
                 toast(`Папка «${name}» создана`);
+                // «Новая папка» в окне «Переместить»: сразу в неё
+                if (moveDialog.open) {
+                    moveBrowse(`${parent}/${name}`);
+                }
             }
             hideDialog(dialog);
             await refresh();
@@ -983,6 +1004,166 @@ if (root && win) {
             await refresh();
         }
     };
+
+    /* ---------- перемещение ---------- */
+
+    /** Что перемещается, из какой папки, какая папка открыта в окне выбора; номер запроса — устаревший не рисуется */
+    const moving = {items: [], from: '', path: '', request: 0};
+
+    /** Папка — одна из перемещаемых или внутри неё: туда нельзя */
+    const isMovedPath = (path) => moving.items.some((item) => item.type === 'dir'
+        && (path === item.path || path.startsWith(item.path + '/')));
+
+    /** Путь в окне выбора: «Корень / images / company», последний — открытая папка; «сюда» — не в ту же папку */
+    const renderMovePath = () => {
+        const parts = moving.path.split('/').filter(Boolean);
+        const crumbs = [{name: 'Корень', path: ''},
+            ...parts.map((name, index) => ({name, path: '/' + parts.slice(0, index + 1).join('/')}))];
+        const nodes = [];
+        crumbs.forEach((crumb, index) => {
+            if (index) {
+                nodes.push(element('span', 'fm-move__sep', '/'));
+            }
+            const isLast = index === crumbs.length - 1;
+            const node = element(isLast ? 'span' : 'button', 'fm-move__crumb', crumb.name);
+            if (isLast) {
+                node.setAttribute('aria-current', 'location');
+            } else {
+                node.type = 'button';
+                node.dataset.fmMoveTo = crumb.path;
+            }
+            nodes.push(node);
+        });
+        if (moving.path === moving.from) {
+            nodes.push(element('span', 'fm-move__here', 'сейчас здесь'));
+        }
+        const pathElement = moveDialog.querySelector('[data-fm-move-path]');
+        pathElement.replaceChildren(...nodes);
+        // длинный путь — виден конец
+        pathElement.scrollLeft = pathElement.scrollWidth;
+        moveDialog.querySelector('[data-fm-move-back]').disabled = moving.path === '';
+        moveDialog.querySelector('[data-fm-action="move-here"]').disabled = moving.path === moving.from;
+    };
+
+    /** Открыть папку в окне выбора: её вложенные папки (getTree depth=1) */
+    const moveBrowse = async (path) => {
+        moving.path = path;
+        renderMovePath();
+        const list = moveDialog.querySelector('[data-fm-move-list]');
+        const request = ++moving.request;
+        list.classList.add('is-loading');
+        let nodes = [];
+        try {
+            nodes = await call('getTree', {path, depth: 1});
+        } catch (error) {
+            report(error);
+        }
+        if (request !== moving.request) {
+            return;
+        }
+        const rows = nodes.map((node) => {
+            const row = element('button', 'fm-move__row');
+            row.type = 'button';
+            row.dataset.fmMoveTo = node.path;
+            row.append(icon('folder'), element('span', 'fm-move__name', node.name));
+            if (isMovedPath(node.path)) {
+                row.disabled = true;
+                row.append(element('span', 'fm-move__note', 'перемещается'));
+            } else {
+                row.append(icon('forward', 'fm-icon_16 fm-move__arrow'));
+            }
+            return row;
+        });
+        list.replaceChildren(...(rows.length ? rows : [element('p', 'fm-move__empty', 'Вложенных папок нет')]));
+        list.classList.remove('is-loading');
+        list.scrollTop = 0;
+        // уровень сменяется плавно
+        list.classList.remove('fm-move__list_in');
+        void list.offsetWidth;
+        list.classList.add('fm-move__list_in');
+    };
+
+    /** «Переместить»: окно выбора папки, открыто там, где элементы лежат сейчас */
+    const openMove = (items) => {
+        if (!items.length) {
+            return;
+        }
+        moving.items = items;
+        moving.from = parentPath(items[0].path);
+        moveDialog.querySelector('[data-fm-text]').textContent = items.length > 1
+            ? `Выбрано: ${items.length}. Откройте папку, куда их переместить.`
+            : `Откройте папку, куда переместить ${items[0].type === 'dir' ? 'папку' : 'файл'} «${items[0].name}».`;
+        showDialog(moveDialog);
+        moveBrowse(moving.from);
+        warnUsage(moveDialog, items, 'После перемещения они перестанут работать.');
+        moveDialog.querySelector('[data-fm-move-back]').focus({preventScroll: true});
+    };
+
+    const moveHere = async () => {
+        const {items, path} = moving;
+        const button = moveDialog.querySelector('[data-fm-action="move-here"]');
+        if (path === moving.from || isMovedPath(path) || button.disabled) {
+            return;
+        }
+        button.disabled = true;
+        let isMoved = false;
+        try {
+            const moved = await call('move', {path, items: items.map((item) => item.path)});
+            isMoved = true;
+            hideDialog(moveDialog);
+            toast(items.length > 1
+                ? `Перемещено: ${moved.length}`
+                : (items[0].type === 'dir' ? 'Папка перемещена' : 'Файл перемещён'));
+        } catch (error) {
+            report(error);
+            button.disabled = false;
+        }
+        // открытая папка была внутри перемещённой (меню папки в дереве) — открыть её на новом месте
+        const dir = items.find((item) => item.type === 'dir' && (state.path === item.path || state.path.startsWith(item.path + '/')));
+        if (isMoved && dir) {
+            await navigate(`${path}/${dir.name}${state.path.slice(dir.path.length)}`);
+            loadTree().catch(report);
+            return;
+        }
+        if (isMoved) {
+            state.selected.clear();
+            state.checking = false;
+        }
+        // и при ошибке: часть могла переместиться
+        await refresh();
+        updateSelection();
+    };
+
+    moveDialog.addEventListener('click', (event) => {
+        const to = event.target.closest('[data-fm-move-to]');
+        if (to) {
+            if (!to.disabled) {
+                moveBrowse(to.dataset.fmMoveTo);
+            }
+            return;
+        }
+        if (event.target.closest('[data-fm-move-back]')) {
+            if (moving.path !== '') {
+                moveBrowse(parentPath(moving.path));
+            }
+            return;
+        }
+        const action = event.target.closest('[data-fm-action]')?.dataset.fmAction;
+        if (action === 'move-here') {
+            moveHere();
+        } else if (action === 'move-create') {
+            state.target = {type: 'dir', path: moving.path, name: baseName(moving.path)};
+            openNameDialog(createDialog, '');
+        }
+    });
+
+    // Backspace — на уровень выше
+    moveDialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Backspace' && moving.path !== '') {
+            event.preventDefault();
+            moveBrowse(parentPath(moving.path));
+        }
+    });
 
     const copyPath = async (item) => {
         try {
@@ -1139,6 +1320,13 @@ if (root && win) {
             case 'delete-selected':
                 remove(selectedItems());
                 break;
+            case 'move-selected':
+                openMove(selectedItems());
+                break;
+            case 'move':
+                // несколько выбранных — если меню открыто на одном из них
+                openMove(state.selected.size > 1 && state.selected.has(item.path) ? selectedItems() : [item]);
+                break;
             case 'cancel-selection':
                 state.selected.clear();
                 state.checking = false;
@@ -1257,7 +1445,7 @@ if (root && win) {
         // галочка и Ctrl/⌘ — отметить (включает режим отметки); Shift — диапазон; в режиме отметки клик по карточке
         // отмечает её; иначе папка — открыть, файл — выбрать один
         if (event.target.closest('.fm-card__check') || event.ctrlKey || event.metaKey) {
-            toggleSelect(path);
+            toggleSelect(path, {keep: !event.target.closest('.fm-card__check')});
         } else if (event.shiftKey && state.anchor) {
             selectRange(path);
         } else if (state.checking) {
@@ -1457,7 +1645,7 @@ if (root && win) {
     win.addEventListener('close', () => {
         closeMenus();
         hideTip();
-        [renameDialog, createDialog, confirmDialog, compressDialog].forEach(hideDialog);
+        [renameDialog, createDialog, confirmDialog, compressDialog, moveDialog].forEach(hideDialog);
         state.added.clear();
         state.failed = [];
         const files = state.result;

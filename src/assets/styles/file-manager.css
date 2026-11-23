@@ -713,7 +713,7 @@ button.fm-crumbs__item:hover {
     opacity: 1;
 }
 
-.fm-card[aria-selected="true"] .fm-card__check {
+.fm-files_multi .fm-card[aria-selected="true"] .fm-card__check {
     color: var(--fm-accent);
 }
 
@@ -1516,40 +1516,40 @@ button.fm-crumbs__item:hover {
 
 /* ---------- полосы прокрутки (Figma Scrollbar/scrollbar, как в texted) ---------- */
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar {
     width: 4px;
     height: 4px;
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-button {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-button {
     display: none;
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-track {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-track {
     border-radius: 9999px;
     background: var(--fm-sb-track);
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-track:hover {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-track:hover {
     background: var(--fm-sb-track-active);
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb {
     border-radius: 9999px;
     background: var(--fm-sb-thumb);
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb:hover {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb:hover {
     background: var(--fm-sb-thumb-hover);
 }
 
-.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box)::-webkit-scrollbar-thumb:active {
+.fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar-thumb:active {
     background: var(--fm-sb-thumb-press);
 }
 
 /* Firefox: только цвета покоя (наведение и нажатие браузер не поддерживает) */
 @supports not selector(::-webkit-scrollbar) {
-    .fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box) {
+    .fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list) {
         scrollbar-width: thin;
         scrollbar-color: var(--fm-sb-thumb) var(--fm-sb-track);
     }
@@ -1699,5 +1699,174 @@ button.fm-crumbs__item:hover {
 
     .fm-tabbar__item_danger .fm-icon {
         color: var(--fm-error-medium);
+    }
+}
+
+/* ---------- окно «Переместить»: папка назначения выбирается пошагово ---------- */
+
+#sf-file-manager-move .fm-modal {
+    width: 520px;
+}
+
+.fm-move {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--fm-line);
+    border-radius: var(--fm-radius-l);
+}
+
+.fm-move__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--fm-line);
+}
+
+.fm-move__back {
+    flex-shrink: 0;
+}
+
+.fm-move__back:disabled {
+    opacity: 0.4;
+}
+
+.fm-move__path {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+
+.fm-move__crumb {
+    flex-shrink: 0;
+    padding: 2px 4px;
+    border-radius: var(--fm-radius-xs);
+    color: var(--fm-desc);
+    transition: background-color var(--fm-fast) var(--fm-ease), color var(--fm-fast) var(--fm-ease);
+}
+
+button.fm-move__crumb:hover {
+    background: var(--fm-hover);
+    color: var(--fm-text);
+}
+
+.fm-move__crumb[aria-current] {
+    color: var(--fm-current);
+    font-weight: 600;
+}
+
+.fm-move__sep {
+    color: var(--fm-muted);
+}
+
+.fm-move__here {
+    flex-shrink: 0;
+    margin-left: 4px;
+    padding: 2px 8px;
+    border-radius: var(--fm-radius-s);
+    background: var(--fm-field);
+    color: var(--fm-muted);
+    font-size: 12px;
+}
+
+.fm-move__list {
+    height: 280px;
+    padding: 4px;
+    overflow-y: auto;
+    transition: opacity var(--fm-fast) var(--fm-ease);
+}
+
+/* пока грузится уровень, прежний список не нажимается */
+.fm-move__list.is-loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.fm-move__list_in > * {
+    animation: fm-move-in var(--fm-base) var(--fm-ease-out) both;
+}
+
+@keyframes fm-move-in {
+    from {
+        opacity: 0;
+        transform: translateX(8px);
+    }
+}
+
+.fm-move__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: var(--fm-radius-m);
+    font-size: 14px;
+    line-height: 1.5;
+    text-align: left;
+    color: var(--fm-text);
+    transition: background-color var(--fm-fast) var(--fm-ease);
+}
+
+.fm-move__row:hover:not(:disabled) {
+    background: var(--fm-hover);
+}
+
+.fm-move__row:active:not(:disabled) {
+    background: var(--fm-press);
+}
+
+.fm-move__row:disabled {
+    color: var(--fm-muted);
+    cursor: default;
+}
+
+.fm-move__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fm-move__arrow {
+    color: var(--fm-muted);
+}
+
+.fm-move__note {
+    font-size: 12px;
+}
+
+.fm-move__empty {
+    padding: 48px 16px;
+    color: var(--fm-muted);
+    font-size: 14px;
+    text-align: center;
+}
+
+/* «Новая папка» — квадратная кнопка со значком, подпись для чтения с экрана */
+.fm-move__create {
+    flex: 0 0 56px;
+    padding: 16px;
+}
+
+.fm-move__create > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+}
+
+@media (max-width: 811px) {
+    .fm-move__list {
+        height: min(320px, 40dvh);
     }
 }

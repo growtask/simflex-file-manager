@@ -3,7 +3,7 @@
 /**
  * Файловый менеджер (Figma SimflexCMS, страница Way-File): разметка окон на своём слое интерфейса, без компонентов
  * админки — как редактор texted. Окна — <dialog> (верхний слой браузера): окно менеджера file-window, окна действий
- * file-modal («Переименовать», «Создать папку», подтверждение удаления), меню file-menu и сортировки, подсказка,
+ * file-modal («Переименовать», «Создать папку», «Переместить», подтверждение удаления), меню file-menu и сортировки, подсказка,
  * тосты. Содержимое строит assets/js/file-manager.js по API Manager, стили — assets/styles/file-manager.css.
  * @var string $fileManagerApi Адрес API (Manager::handleRequest())
  * @var string $fileManagerRoot Веб-путь корня файлов, например /uf
@@ -117,8 +117,9 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 <?= $tab('folder-plus', 'Создать', 'create') ?>
                 <?= $tab('refresh', 'Обновить', 'refresh') ?>
                 <?= $tab('check', 'Готово', 'done') ?>
-                <?php /* режим отметки: «Отменить выбор», «Удалить» отмеченное, «Готово» */ ?>
+                <?php /* режим отметки: «Отменить выбор», «Переместить» и «Удалить» отмеченное, «Готово» */ ?>
                 <?= $tab('close', 'Отменить', 'cancel-selection', 'fm-tabbar__item_check') ?>
+                <?= $tab('folder-move', 'Переместить', 'move-selected', 'fm-tabbar__item_check') ?>
                 <?= $tab('trash', 'Удалить', 'delete-selected', 'fm-tabbar__item_check fm-tabbar__item_danger') ?>
                 <?= $tab('check', 'Готово', 'done', 'fm-tabbar__item_check') ?>
             </div>
@@ -130,6 +131,7 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 <?= $item('check', 'Выбрать', 'select-item', 'fm-item_touch') ?>
                 <?= $item('download', 'Скачать', 'download') ?>
                 <?= $item('edit', 'Переименовать', 'rename') ?>
+                <?= $item('folder-move', 'Переместить', 'move') ?>
                 <?= $item('link', 'Копировать путь', 'copy-path') ?>
                 <div class="fm-pop__line" role="separator"></div>
                 <?= $item('trash', 'Удалить', 'delete', 'fm-item_danger') ?>
@@ -141,6 +143,7 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 <?= $item('folder-plus', 'Создать папку', 'create') ?>
                 <?= $item('upload', 'Загрузить файлы', 'upload-to') ?>
                 <?= $item('edit', 'Переименовать', 'rename') ?>
+                <?= $item('folder-move', 'Переместить', 'move') ?>
                 <?= $item('link', 'Копировать путь', 'copy-path') ?>
                 <div class="fm-pop__line" role="separator"></div>
                 <?= $item('trash', 'Удалить', 'delete', 'fm-item_danger') ?>
@@ -178,6 +181,35 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
         'create-save',
     ) ?>
     <?= $modal('sf-file-manager-confirm', 'Удалить файл?', 'Файл будет удалён сразу.', '', 'Отмена', 'Удалить', 'confirm-yes') ?>
+    <?php /* «Переместить»: папка назначения выбирается пошагово — список вложенных папок, «назад» и путь */ ?>
+    <dialog id="sf-file-manager-move" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="<?= $theme ?>"
+            aria-labelledby="sf-file-manager-move-title">
+        <div class="fm-modal fm-dialog__box">
+            <button type="button" class="fm-modal__close" data-fm-close aria-label="Закрыть"><?= $icon('close') ?></button>
+            <div class="fm-modal__box">
+                <div class="fm-modal__head">
+                    <h2 class="fm-modal__title" id="sf-file-manager-move-title">Переместить</h2>
+                    <p class="fm-modal__text" data-fm-text></p>
+                    <p class="fm-modal__warning" role="alert" data-fm-warning hidden></p>
+                </div>
+                <div class="fm-move">
+                    <div class="fm-move__head">
+                        <button type="button" class="fm-tool fm-move__back" data-fm-move-back aria-label="На уровень выше">
+                            <?= $icon('back') ?></button>
+                        <nav class="fm-move__path" aria-label="Папка назначения" data-fm-move-path></nav>
+                    </div>
+                    <div class="fm-move__list" role="listbox" aria-label="Папки" data-fm-move-list></div>
+                </div>
+                <div class="fm-modal__footer fm-move__footer">
+                    <button type="button" class="fm-button fm-button_gray fm-button_l fm-move__create"
+                            data-fm-action="move-create"><?= $icon('folder-plus') ?><span>Новая папка</span></button>
+                    <button type="button" class="fm-button fm-button_gray fm-button_l" data-fm-close>Отмена</button>
+                    <button type="button" class="fm-button fm-button_primary fm-button_l"
+                            data-fm-action="move-here">Переместить сюда</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
     <?php /* вопрос перед загрузкой: сжимать картинки и видео или загрузить как есть (аудио не сжимается) */ ?>
     <dialog id="sf-file-manager-compress" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="<?= $theme ?>"
             aria-labelledby="sf-file-manager-compress-title">

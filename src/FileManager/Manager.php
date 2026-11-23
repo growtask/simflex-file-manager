@@ -58,13 +58,16 @@ class Manager
 
     /** Методы, доступные через параметр запроса method */
     protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'compression', 'delete', 'createDir',
-        'rename', 'upload'];
+        'rename', 'move', 'upload'];
+
+    /** Больше стольких элементов за один запрос move не перемещается */
+    public const MOVE_MAX_ITEMS = 500;
 
     /** @var string|false|null Путь к ffmpeg: null — ещё не искали, false — нет */
     protected static string|false|null $ffmpeg = null;
 
     /** Методы API, которые меняют файлы */
-    protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'upload'];
+    protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'move', 'upload'];
 
     /** Кириллица → латиница для имён загруженных файлов (как в редакторе texted) */
     protected const TRANSLIT = [
@@ -191,15 +194,16 @@ class Manager
      *
      * @param bool $allowRoot Можно ли сам корень (удалить и переименовать корень нельзя)
      * @param bool $mustExist Путь должен существовать
+     * @param string|null $relative Путь от корня; null - параметр запроса path
      * @throws ApiException 400 - неверный путь, 404 - не найден
      */
-    protected function resolvePath(bool $allowRoot = true, bool $mustExist = true): string
+    protected function resolvePath(bool $allowRoot = true, bool $mustExist = true, ?string $relative = null): string
     {
         if ($this->realRoot === '' || !is_dir($this->realRoot)) {
             throw new ApiException('Каталог файлов не найден', 500);
         }
 
-        $relative = (string)($_REQUEST['path'] ?? '');
+        $relative ??= (string)($_REQUEST['path'] ?? '');
         if ($relative !== '' && $relative[0] !== '/') {
             throw ApiException::badRequest('Неверный путь');
         }
@@ -493,6 +497,59 @@ class Manager
         }
 
         return [];
+    }
+
+    /**
+     * Перемещает файлы и папки items[] (пути от корня, из одной или разных папок) в папку path. Сначала
+     * проверяется всё: корень не перемещается, папка - не в саму себя и не во вложенную, имя в папке назначения
+     * свободно; потом элементы переносятся по одному
+     *
+     * @return string[] Новые пути перемещённых
+     * @throws ApiException 400 - неверный путь, 409 - имя занято, 422 - нельзя переместить, 403 - нет прав
+     */
+    protected function move(): array
+    {
+        $target = $this->resolvePath();
+        if (!is_dir($target)) {
+            throw ApiException::badRequest('Переместить можно только в папку');
+        }
+
+        $items = $_POST['items'] ?? null;
+        if (!is_array($items) || !$items || count($items) > self::MOVE_MAX_ITEMS) {
+            throw ApiException::badRequest('Не выбрано, что перемещать');
+        }
+
+        /** @var array<string, string> $plan Новый путь => прежний */
+        $plan = [];
+        foreach ($items as $relative) {
+            if (!is_string($relative)) {
+                throw ApiException::badRequest('Неверный путь');
+            }
+            $path = $this->resolvePath(allowRoot: false, relative: $relative);
+            $name = basename($path);
+            if (dirname($path) === $target) {
+                throw ApiException::unprocessable("«{$name}» уже в этой папке");
+            }
+            if (is_dir($path) && str_starts_with($target . '/', $path . '/')) {
+                throw ApiException::unprocessable("Папку «{$name}» нельзя переместить в неё саму");
+            }
+            $destination = $target . '/' . $name;
+            if (file_exists($destination) || isset($plan[$destination])) {
+                throw new ApiException("В папке уже есть «{$name}»", 409);
+            }
+            $plan[$destination] = $path;
+        }
+
+        $moved = [];
+        foreach ($plan as $destination => $path) {
+            if (!@rename($path, $destination)) {
+                $done = $moved ? sprintf('Перемещено %d из %d. ', count($moved), count($plan)) : '';
+                throw ApiException::forbidden($done . '«' . basename($path) . '»: нет прав на запись');
+            }
+            $moved[] = $this->relative($destination);
+        }
+
+        return $moved;
     }
 
     /**

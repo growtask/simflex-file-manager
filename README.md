@@ -14,7 +14,7 @@
 
 ## Состав
 
-- `src/FileManager/Manager.php` — API (`?method=getTree|getFileList|download|usage|delete|createDir|rename|upload`):
+- `src/FileManager/Manager.php` — API (`?method=getTree|getFileList|download|usage|delete|createDir|rename|move|upload`):
   корень каталога, проверка доступа, белый список расширений, изменяющие запросы — только POST со своего сайта
   и с CSRF-токеном (`X-CSRF-Token`), путь не выходит из корня, корень не удаляется и не переименовывается;
   загрузка — имя латиницей, без перезаписи, JPEG/PNG/WebP сжимаются в WebP до 2560 px;
