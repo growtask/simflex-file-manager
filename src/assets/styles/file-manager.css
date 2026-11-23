@@ -1177,6 +1177,12 @@ button.fm-crumbs__item:hover {
     animation: fm-toast-in 200ms var(--fm-ease);
 }
 
+/* Figma Feedback/toast success: «Файлы загружены» — зелёный */
+.fm-toast_success {
+    background: var(--fm-success-dark);
+    color: var(--fm-white);
+}
+
 .fm-toast_error {
     background: var(--fm-error-dark);
     color: var(--fm-white);
@@ -1208,6 +1214,15 @@ button.fm-crumbs__item:hover {
         padding: 0;
     }
 
+    /* Figma file-window mobile: шапка и панель поиска с отступом 12, у сортировки нет разделителя */
+    .fm-window__head {
+        padding: 8px 12px;
+    }
+
+    .fm-toolbar__line {
+        display: none;
+    }
+
     .fm-window {
         width: 100%;
         height: 100%;
@@ -1237,8 +1252,9 @@ button.fm-crumbs__item:hover {
         display: grid;
         grid-template-columns: 40px minmax(0, 1fr) auto;
         grid-template-areas: "preview name name" "preview date weight";
-        column-gap: 16px;
-        row-gap: 0;
+        /* Figma file-card-mobile: превью и текст через 8, имя и дата через 4 */
+        column-gap: 8px;
+        row-gap: 4px;
         align-items: center;
         padding: 8px 12px;
         border-bottom: 1px solid var(--fm-line);
@@ -1316,35 +1332,47 @@ button.fm-crumbs__item:hover {
     /* Figma file-tabbar-item: светлая панель, тёмные значки */
     .fm-tabbar {
         display: flex;
-        padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+        gap: 4px;
+        padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
         background: var(--fm-field);
     }
 
+    /* Figma file-tabbar-item: 52 в высоту, значок 24, подпись ui/xs серым */
     .fm-tabbar__item {
         display: flex;
         flex: 1;
         flex-direction: column;
         align-items: center;
+        justify-content: center;
         gap: 2px;
         min-width: 0;
-        padding: 6px 4px;
-        border-radius: var(--fm-radius-m);
+        height: 52px;
+        padding: 4px 0;
+        border-radius: var(--fm-radius-s);
         color: var(--fm-icon);
         font-size: 11px;
-        line-height: 1.45;
+        font-weight: 600;
+        line-height: 1.4;
     }
 
     .fm-tabbar__item span {
-        color: var(--fm-desc);
+        color: var(--fm-muted);
     }
 
     .fm-tabbar__item:active {
         background: var(--fm-press);
     }
 
-    /* тосты — над нижней панелью */
+    /* тосты — над нижней панелью (68) с отступом 20, на всю ширину (Figma file-screen-mobile-toast) */
     .fm-toasts {
-        bottom: calc(72px + env(safe-area-inset-bottom));
+        right: 12px;
+        bottom: calc(88px + env(safe-area-inset-bottom));
+        left: 12px;
+        align-items: stretch;
+    }
+
+    .fm-toast {
+        max-width: none;
     }
 
     .fm-tabbar__item:disabled {
@@ -1379,20 +1407,26 @@ button.fm-crumbs__item:hover {
     /* Figma file-modal mobile: шторка снизу без скругления, сверху полоса с крестиком и линией */
     .fm-modal__box {
         max-height: calc(100dvh - 24px);
-        padding: 81px 16px calc(24px + env(safe-area-inset-bottom));
+        /* Figma file-modal mobile: шапка 64 с крестиком, линия 2 с отступами 8, содержимое 20 / 16 / 70 */
+        padding: 86px 16px calc(70px + env(safe-area-inset-bottom));
         border-radius: 0;
         background:
-            linear-gradient(var(--fm-line), var(--fm-line)) 0 64px / 100% 1px no-repeat,
+            linear-gradient(var(--fm-line), var(--fm-line)) 8px 64px / calc(100% - 16px) 2px no-repeat,
             var(--fm-bg);
     }
 
+    .fm-modal__title {
+        font-size: 20px;
+    }
+
     .fm-modal__close {
-        top: 12px;
-        right: 12px;
+        top: 8px;
+        right: 8px;
         left: auto;
-        width: 40px;
-        height: 40px;
-        padding: 8px;
+        width: 48px;
+        height: 48px;
+        padding: 12px;
+        border-radius: var(--fm-radius-m);
         background: var(--fm-field);
         color: var(--fm-icon);
     }

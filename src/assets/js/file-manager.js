@@ -273,7 +273,8 @@ if (root && win) {
             toastsElement.hidePopover();
         }
         toastsElement.showPopover();
-        const item = element('div', `fm-toast${type === 'error' ? ' fm-toast_error' : ''}`, message);
+        // success — зелёный, error — красный, info — тёмный (Figma Feedback/toast)
+        const item = element('div', `fm-toast fm-toast_${type}`, message);
         toastsElement.append(item);
         while (toastsElement.children.length > 3) {
             toastsElement.firstElementChild.remove();
@@ -924,7 +925,7 @@ if (root && win) {
             await navigator.clipboard.writeText(filesRoot + item.path);
             toast('Путь скопирован');
         } catch {
-            toast(filesRoot + item.path);
+            toast(filesRoot + item.path, 'info');
         }
     };
 

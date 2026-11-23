@@ -328,7 +328,7 @@ class Manager
                     'name' => $dir->getFilename(),
                     'path' => $filePath,
                     'count' => $elCnt,
-                    'edited' => $lastDate ? date('d.m.Y H:i', $lastDate) : '',
+                    'edited' => $lastDate ? date('d.m.y H:i', $lastDate) : '',
                     'mtime' => $lastDate,
                 ];
             } else {
@@ -370,7 +370,7 @@ class Manager
             'size' => $size,
             'size_ext' => $sizeExt,
             'dimensions' => $imgDimensions,
-            'edited' => date('d.m.Y H:i', $it->getMTime()),
+            'edited' => date('d.m.y H:i', $it->getMTime()),
             // размер в байтах и время изменения — для сортировки
             'bytes' => $bytes,
             'mtime' => $it->getMTime(),
