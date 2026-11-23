@@ -150,7 +150,9 @@ html:has(.fm-dialog[open]) {
 }
 
 /* размер — по видимой области (100%, а не 100vw: без полосы прокрутки страницы) */
+/* размер — по видимой области вместе с отступами (отступ снизу — место экранной клавиатуры) */
 .fm-dialog {
+    box-sizing: border-box;
     position: fixed;
     inset: 0;
     width: 100%;
@@ -416,6 +418,9 @@ button.fm-crumbs__item:hover {
     line-height: 1.45;
     text-align: left;
     color: var(--fm-text);
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
     transition: background-color var(--fm-fast) var(--fm-ease);
 }
 
@@ -574,6 +579,10 @@ button.fm-crumbs__item:hover {
     border-radius: var(--fm-radius-m);
     text-align: left;
     user-select: none;
+    /* долгое нажатие — меню менеджера, а не системное меню картинки или выделение (iOS) */
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     transition: background-color var(--fm-fast) var(--fm-ease), box-shadow var(--fm-fast) var(--fm-ease);
 }
 
@@ -1383,9 +1392,10 @@ button.fm-crumbs__item:hover {
         display: none;
     }
 
+    /* шторка снизу; при экранной клавиатуре — над ней */
     .fm-dialog_modal {
         align-items: flex-end;
-        padding: 0;
+        padding: 0 0 var(--fm-keyboard, 0px);
     }
 
     /* шторка выезжает снизу */
@@ -1406,7 +1416,7 @@ button.fm-crumbs__item:hover {
 
     /* Figma file-modal mobile: шторка снизу без скругления, сверху полоса с крестиком и линией */
     .fm-modal__box {
-        max-height: calc(100dvh - 24px);
+        max-height: calc(100dvh - 24px - var(--fm-keyboard, 0px));
         /* Figma file-modal mobile: шапка 64 с крестиком, линия 2 с отступами 8, содержимое 20 / 16 / 70 */
         padding: 86px 16px calc(70px + env(safe-area-inset-bottom));
         border-radius: 0;
@@ -1447,5 +1457,16 @@ button.fm-crumbs__item:hover {
 @media (max-width: 599px) {
     .fm-crumbs__list > :nth-last-child(n + 5) {
         display: none;
+    }
+}
+
+/* сенсорный экран без наведения (планшет в сетке): галочки видны сразу, касание не оставляет рамку наведения */
+@media (hover: none) and (min-width: 812px) {
+    .fm-card__check {
+        opacity: 1;
+    }
+
+    .fm-card:hover {
+        box-shadow: none;
     }
 }

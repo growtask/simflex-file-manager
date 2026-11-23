@@ -241,6 +241,15 @@ if (root && win) {
         });
     });
 
+    // экранная клавиатура телефона закрывает низ экрана: шторка окна поднимается над ней (--fm-keyboard)
+    const keyboardOffset = () => {
+        const viewport = window.visualViewport;
+        const height = viewport ? Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)) : 0;
+        dialogs.forEach((dialog) => dialog.style.setProperty('--fm-keyboard', `${height}px`));
+    };
+    window.visualViewport?.addEventListener('resize', keyboardOffset);
+    window.visualViewport?.addEventListener('scroll', keyboardOffset);
+
     /** Подтверждение (Figma file-modal delfile, delfolder): Promise<boolean> */
     const confirmAction = (title, text, yesText = 'Удалить') => new Promise((resolve) => {
         confirmDialog.querySelector('[data-fm-title]').textContent = title;
@@ -258,7 +267,7 @@ if (root && win) {
             resolve(answer);
         }, {once: true});
         showDialog(confirmDialog);
-        yes.focus();
+        yes.focus({preventScroll: true});
     });
 
     /* ---------- тосты ---------- */
@@ -356,7 +365,7 @@ if (root && win) {
         menu.style.top = `${top}px`;
         menu.style.setProperty('--corner-x', `${Math.max(16, Math.min(x - left - 4, rect.width - 24))}px`);
         if (focus) {
-            (menu.querySelector('[aria-checked="true"]') ?? menu.querySelector('.fm-item'))?.focus();
+            (menu.querySelector('[aria-checked="true"]') ?? menu.querySelector('.fm-item'))?.focus({preventScroll: true});
         }
     };
 
@@ -842,7 +851,8 @@ if (root && win) {
         }
         input.value = value;
         showDialog(dialog);
-        input.focus();
+        // без прокрутки: окно ещё выезжает (шторка снизу), прокрутка сдвинула бы его содержимое
+        input.focus({preventScroll: true});
         // имя без расширения выделено: обычно меняют его
         const dot = value.lastIndexOf('.');
         input.setSelectionRange(0, dot > 0 ? dot : value.length);
@@ -1146,17 +1156,37 @@ if (root && win) {
         }
     });
 
-    // долгое нажатие на сенсорном экране — меню
+    // долгое нажатие на сенсорном экране — меню; клик, который браузер пришлёт, когда палец отпустят, не открывает
+    // папку и не закрывает меню
     let pressTimer = null;
+    let isLongPress = false;
     win.addEventListener('touchstart', (event) => {
+        isLongPress = false;
         const item = itemOf(event.target);
-        if (!item) {
+        if (!item || event.touches.length > 1) {
             return;
         }
         const touch = event.touches[0];
-        pressTimer = setTimeout(() => openItemMenu(item, touch.clientX, touch.clientY), LONG_PRESS);
+        pressTimer = setTimeout(() => {
+            isLongPress = true;
+            openItemMenu(item, touch.clientX, touch.clientY);
+        }, LONG_PRESS);
     }, {passive: true});
-    ['touchend', 'touchmove', 'touchcancel'].forEach((type) => win.addEventListener(type, () => clearTimeout(pressTimer)));
+    ['touchend', 'touchmove', 'touchcancel'].forEach((type) => win.addEventListener(type, () => clearTimeout(pressTimer), {passive: true}));
+    win.addEventListener('click', (event) => {
+        if (isLongPress) {
+            isLongPress = false;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }
+    }, true);
+    // браузер тоже открывает меню по долгому нажатию (contextmenu): второй раз не перестраиваем
+    win.addEventListener('contextmenu', (event) => {
+        if (isLongPress) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }
+    }, true);
 
     // клавиатура по карточкам: стрелки, Enter, пробел, Delete, меню
     win.addEventListener('keydown', (event) => {
