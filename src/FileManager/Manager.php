@@ -48,7 +48,7 @@ class Manager
     protected const EXECUTABLE_NAME_PART = '/^(php\d*|pht|phtml|phar|phps|cgi|pl|py|asp|aspx|jsp|sh|shtml)$/i';
 
     /** Методы, доступные через параметр запроса method */
-    protected const API_METHODS = ['getTree', 'getFileList', 'download', 'delete', 'createDir', 'rename', 'upload'];
+    protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'delete', 'createDir', 'rename', 'upload'];
 
     /** Методы API, которые меняют файлы */
     protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'upload'];
@@ -70,6 +70,10 @@ class Manager
     protected string $rootDir;
     /** Корень файлов после realpath(); пусто — корня нет */
     protected string $realRoot;
+    /** @var callable|null Где стоит ссылка на файл: fn(string $url): array<string, int> (таблица => записей) */
+    protected $usageFn = null;
+    /** Адрес корня файлов на сайте (для поиска ссылок): /uf */
+    protected string $rootUrl = '/uf';
 
     /**
      * @param string $root Каталог файлов (public/uf)
@@ -82,6 +86,38 @@ class Manager
         $this->realRoot = (string)realpath($this->rootDir);
         $this->testAuthFn = $authFn;
         $this->csrfFn = $csrfFn;
+    }
+
+    /**
+     * Поиск ссылок на файл для метода usage: окно предупреждает перед удалением и переименованием, что файл стоит
+     * на страницах (ядро — System\FileUsage)
+     * @param callable $fn fn(string $url): array<string, int> — таблица => сколько записей содержат адрес
+     * @param string $rootUrl Адрес корня файлов на сайте
+     */
+    public function setUsageFinder(callable $fn, string $rootUrl = '/uf'): static
+    {
+        $this->usageFn = $fn;
+        $this->rootUrl = rtrim($rootUrl, '/');
+        return $this;
+    }
+
+    /**
+     * Где на сайте стоит ссылка на файл или на что-то в папке: [{table, count}], пусто — нигде (или поиск не задан)
+     * @return array<int, array{table: string, count: int}>
+     */
+    protected function usage(): array
+    {
+        $path = $this->resolvePath(allowRoot: false);
+        if (!$this->usageFn) {
+            return [];
+        }
+        $url = $this->rootUrl . $this->relative($path) . (is_dir($path) ? '/' : '');
+        $out = [];
+        foreach (($this->usageFn)($url) as $table => $count) {
+            $out[] = ['table' => (string)$table, 'count' => (int)$count];
+        }
+
+        return $out;
     }
 
     /**
@@ -285,6 +321,8 @@ class Manager
                     }
                 }
 
+                // пустая папка — дата самой папки
+                $lastDate = $lastDate ?: $dir->getMTime();
                 $out[] = [
                     'type' => 'dir',
                     'name' => $dir->getFilename(),

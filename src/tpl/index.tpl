@@ -1,198 +1,172 @@
 <?php
 
 /**
- * Окно файлового менеджера (file-window) на Common/Modal ядра Simflex CMS: шапка с крошками и «Закрыть», дерево папок
- * и кнопки папки (desktop), поиск и сортировка, сетка карточек (на планшете и телефоне — строки), сведения о файле
- * и «Готово», нижняя панель (планшет, телефон), окна «Переименовать» и «Создать папку», контекстное меню.
- * Содержимое строит assets/js/file-manager.js по API Manager. Стили — assets/styles/file-manager.scss (собираются
- * со стилями админки)
+ * Файловый менеджер (Figma SimflexCMS, страница Way-File): разметка окон на своём слое интерфейса, без компонентов
+ * админки — как редактор texted. Окна — <dialog> (верхний слой браузера): окно менеджера file-window, окна действий
+ * file-modal («Переименовать», «Создать папку», подтверждение удаления), меню file-menu и сортировки, подсказка,
+ * тосты. Содержимое строит assets/js/file-manager.js по API Manager, стили — assets/styles/file-manager.css.
  * @var string $fileManagerApi Адрес API (Manager::handleRequest())
  * @var string $fileManagerRoot Веб-путь корня файлов, например /uf
  * @var string $fileManagerAssets Веб-путь опубликованного каталога assets пакета
  * @var string $theme Тема админки: light или dark
  */
 
-use Simflex\Core\Layout\Components\Common\Modal\Layout as Modal;
-use Simflex\Core\Layout\Components\Common\Modal\ModalSize;
-use Simflex\Core\Layout\Components\Common\Modal\ModalTheme;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonSize;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonStyle;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonTheme;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\Layout as Button;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownSize;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownTheme;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\Layout as Dropdown;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\Layout as TextInput;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputLabelPos;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputStyle;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputSize;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputTheme;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\Layout as Tooltip;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\TooltipPosition;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\TooltipTheme;
-use Simflex\Core\Layout\LayoutManager;
-
-LayoutManager::useStyle(dirname(__DIR__) . '/assets/styles/file-manager.scss');
-
-$sprite = $fileManagerAssets . '/img/icons.svg';
-$buttonTheme = ButtonTheme::from($theme);
+$assetsDir = dirname(__DIR__) . '/assets';
+/** Адрес статики с версией по времени изменения: обновлённый пакет не берётся из кэша браузера */
+$asset = fn(string $path) => $fileManagerAssets . '/' . $path . '?v=' . (int)@filemtime($assetsDir . '/' . $path);
+$e = fn(string $text) => htmlspecialchars($text, ENT_QUOTES);
+$sprite = $asset('img/icons.svg');
+$theme = ($theme ?? 'light') === 'dark' ? 'dark' : 'light';
 /** Иконка набора file-icon */
-$icon = fn(string $name, string $class = 'fm-icon') => '<svg class="' . $class . '" aria-hidden="true"><use href="'
-    . htmlspecialchars($sprite) . '#fm-' . $name . '"></use></svg>';
-/** Кнопка действия (file-tool) с подсказкой */
-$tool = fn(string $name, string $label, string $action, string $extra = '') => Tooltip::drawTooltip(
-    trigger: '<button type="button" class="file-tool" data-fm-action="' . $action . '" aria-label="' . $label . '"'
-        . $extra . '>' . $icon($name) . '</button>',
-    text: $label,
-    position: TooltipPosition::Bottom,
-    theme: TooltipTheme::from($theme),
-);
-/** Кнопка нижней панели (file-tabbar-item) */
-$tab = fn(string $name, string $label, string $action) => '<button type="button" class="file-tabbar__item"'
-    . ' data-fm-action="' . $action . '">' . $icon($name) . '<span>' . $label . '</span></button>';
-/** Пункт контекстного меню */
-$menuItem = fn(string $name, string $label, string $action, string $class = '') => '<button type="button"'
-    . ' class="file-menu__item ' . $class . '" role="menuitem" data-fm-action="' . $action . '">' . $icon($name)
-    . '<span>' . $label . '</span></button>';
-/** Поле окна (Figma file-modal): подпись сверху, поле, подсказка под ним */
-$field = fn(string $label, string $placeholder, string $hint, array $attributes) => '<div class="file-modal__field">'
-    . TextInput::drawInput(
-        placeholder: $placeholder,
-        labelText: $label,
-        labelPos: TextInputLabelPos::Standard,
-        style: TextInputStyle::Outline,
-        size: TextInputSize::Small,
-        theme: TextInputTheme::from($theme),
-        reset: false,
-        attributes: $attributes + ['autocomplete' => 'off'],
-    )
-    . '<p class="file-modal__hint">' . htmlspecialchars($hint) . '</p></div>';
-/** Окно с полем имени (Figma file-modal: rename, folder): «Отменить» и главная кнопка справа */
-$nameModal = fn(string $id, string $title, string $text, string $content, string $saveText, string $action) => Modal::drawModal(
-    id: $id,
-    title: $title,
-    text: $text,
-    content: $content,
-    footer: Button::drawButton(
-        text: 'Отменить',
-        style: ButtonStyle::Secondary,
-        size: ButtonSize::Small,
-        theme: $buttonTheme,
-        attributes: ['data-modal-close' => ''],
-    ) . Button::drawButton(
-        text: $saveText,
-        size: ButtonSize::Small,
-        theme: $buttonTheme,
-        attributes: ['data-fm-action' => $action],
-    ),
-    theme: ModalTheme::from($theme),
-    className: 'file-modal',
-);
-
-$window = '<div class="file-window__head">'
-    . '<nav class="file-window__crumbs" aria-label="Путь" data-fm-crumbs></nav>'
-    . '<button type="button" class="file-tool file-window__close" data-modal-close aria-label="Закрыть">'
-    . $icon('close') . '</button></div>'
-    . '<div class="file-window__body">'
-    . '<aside class="file-window__side">'
-    . '<div class="file-window__tree" role="tree" aria-label="Папки" data-fm-tree></div>'
-    . '<div class="file-window__tools">'
-    . $tool('upload', 'Загрузить', 'upload')
-    . $tool('folder-plus', 'Создать папку', 'create')
-    . $tool('refresh', 'Обновить', 'refresh')
-    . $tool('folder-x', 'Удалить папку', 'delete-folder', ' data-fm-delete-folder')
-    . '</div></aside>'
-    . '<div class="file-window__main">'
-    . '<div class="file-window__toolbar">'
-    . TextInput::drawInput(
-        className: 'file-window__search',
-        placeholder: 'Введите название файла',
-        size: TextInputSize::Small,
-        theme: TextInputTheme::from($theme),
-        icon: 'search',
-        attributes: ['data-fm-search' => '', 'aria-label' => 'Поиск по названию', 'type' => 'search'],
-    )
-    . Dropdown::drawSelect(
-        name: '',
-        options: ['name' => 'По названию', 'date' => 'Дата изменения', 'size' => 'Вес файла'],
-        value: 'name',
-        size: DropdownSize::Small,
-        theme: DropdownTheme::from($theme),
-        className: 'file-window__sort',
-        attributes: ['aria-label' => 'Сортировка'],
-        inputAttributes: ['data-fm-sort' => ''],
-    )
-    . '</div>'
-    . '<div class="file-window__board" data-fm-board>'
-    . '<div class="file-window__files" role="listbox" aria-label="Файлы" data-fm-files></div>'
-    . '<div class="file-window__state" data-fm-state hidden>' . $icon('folder', 'file-window__state-icon')
-    . '<p class="file-window__state-title" data-fm-state-title></p>'
-    . '<p class="file-window__state-text" data-fm-state-text></p></div>'
-    . '</div>'
-    . '<div class="file-window__bottom">'
-    . '<div class="file-window__info" data-fm-info><p class="file-window__info-name" data-fm-info-name></p>'
-    . '<p class="file-window__info-meta" data-fm-info-meta></p></div>'
-    . Button::drawButton(
-        className: 'file-window__done',
-        text: 'Готово',
-        size: ButtonSize::Small,
-        theme: $buttonTheme,
-        attributes: ['data-fm-action' => 'done'],
-        iconLeft: 'check',
-        disabled: true,
-    )
-    . '</div></div></div>'
-    . '<div class="file-tabbar">'
-    . $tab('back', 'Назад', 'back')
-    . $tab('upload', 'Загрузить', 'upload')
-    . $tab('folder-plus', 'Создать', 'create')
-    . $tab('refresh', 'Обновить', 'refresh')
-    . $tab('check', 'Готово', 'done')
-    . '</div>'
-    . '<div class="file-window__drop" data-fm-drop hidden>' . $icon('upload', 'file-window__drop-icon')
-    . '<p>Отпустите файлы, чтобы загрузить их в эту папку</p></div>'
-    . '<input class="file-window__input" type="file" multiple tabindex="-1" aria-hidden="true" data-fm-input>';
+$icon = fn(string $name, string $class = '') => '<svg class="fm-icon' . ($class ? ' ' . $class : '')
+    . '" aria-hidden="true"><use href="' . $e($sprite) . '#fm-' . $name . '"></use></svg>';
+/** Кнопка-иконка (file-tool) с подсказкой */
+$tool = fn(string $name, string $label, string $action, string $extra = '') => '<button type="button" class="fm-tool'
+    . '" data-fm-action="' . $action . '" aria-label="' . $e($label) . '" data-fm-tip="' . $e($label) . '"' . $extra . '>'
+    . $icon($name) . '</button>';
+/** Пункт меню */
+$item = fn(string $name, string $label, string $action, string $class = '') => '<button type="button" class="fm-item'
+    . ($class ? ' ' . $class : '') . '" role="menuitem" data-fm-action="' . $action . '">' . $icon($name)
+    . '<span class="fm-item__label">' . $e($label) . '</span></button>';
+/** Пункт нижней панели телефона */
+$tab = fn(string $name, string $label, string $action) => '<button type="button" class="fm-tabbar__item"'
+    . ' data-fm-action="' . $action . '">' . $icon($name) . '<span>' . $e($label) . '</span></button>';
+/** Поле form-input: название, поле, подсказка */
+$field = fn(string $label, string $placeholder, string $hint, string $attributes) => '<label class="fm-field">'
+    . '<span class="fm-field__label">' . $e($label) . '</span>'
+    . '<input class="fm-field__input" type="text" autocomplete="off" spellcheck="false" placeholder="' . $e($placeholder)
+    . '" ' . $attributes . '><span class="fm-field__hint">' . $e($hint) . '</span></label>';
+/** Окно действия (file-modal): крестик снаружи, заголовок, текст, содержимое, «Отменить» и главная кнопка */
+$modal = fn(string $id, string $title, string $text, string $content, string $cancel, string $saveText, string $action) =>
+    '<dialog id="' . $id . '" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="' . $theme . '"'
+    . ' aria-labelledby="' . $id . '-title">'
+    . '<div class="fm-modal fm-dialog__box">'
+    . '<button type="button" class="fm-modal__close" data-fm-close aria-label="Закрыть">' . $icon('close') . '</button>'
+    . '<div class="fm-modal__box">'
+    . '<div class="fm-modal__head"><h2 class="fm-modal__title" id="' . $id . '-title" data-fm-title>' . $e($title) . '</h2>'
+    . '<p class="fm-modal__text" data-fm-text>' . $e($text) . '</p>'
+    // файл стоит на страницах (API usage) — перед удалением и переименованием
+    . '<p class="fm-modal__warning" role="alert" data-fm-warning hidden></p></div>'
+    . $content
+    . '<div class="fm-modal__footer">'
+    . '<button type="button" class="fm-button fm-button_gray fm-button_l" data-fm-close>' . $e($cancel) . '</button>'
+    . '<button type="button" class="fm-button fm-button_primary fm-button_l" data-fm-action="' . $action . '">'
+    . $e($saveText) . '</button>'
+    . '</div></div></div></dialog>';
 ?>
-<div class="file-manager" data-fm-api="<?= htmlspecialchars($fileManagerApi) ?>"
-     data-fm-root="<?= htmlspecialchars($fileManagerRoot) ?>" data-fm-sprite="<?= htmlspecialchars($sprite) ?>">
-    <?= Modal::drawModal(
-        id: 'sf-file-manager',
-        content: $window,
-        size: ModalSize::Large,
-        theme: ModalTheme::from($theme),
-        className: 'file-window file-window-theme_' . $theme,
-        attributes: ['aria-label' => 'Файловый менеджер'],
-    ) ?>
-    <?= $nameModal(
+<link rel="stylesheet" href="<?= $e($asset('styles/file-manager.css')) ?>">
+<div class="file-manager" data-fm-api="<?= $e($fileManagerApi) ?>" data-fm-root="<?= $e($fileManagerRoot) ?>"
+     data-fm-sprite="<?= $e($sprite) ?>">
+    <dialog id="sf-file-manager" class="fm-root fm-dialog fm-dialog_window" data-fm-theme="<?= $theme ?>"
+            aria-label="Файловый менеджер">
+        <div class="fm-window fm-dialog__box">
+            <div class="fm-window__head">
+                <nav class="fm-crumbs" aria-label="Путь">
+                    <button type="button" class="fm-tool fm-crumbs__home" data-fm-path="" aria-label="В корень"
+                            data-fm-tip="В корень"><?= $icon('home', 'fm-icon_16') ?></button>
+                    <div class="fm-crumbs__list" data-fm-crumbs></div>
+                </nav>
+                <?= $tool('close', 'Закрыть', 'close', ' data-fm-close') ?>
+            </div>
+            <div class="fm-window__body">
+                <aside class="fm-side">
+                    <div class="fm-tree" role="tree" aria-label="Папки" data-fm-tree></div>
+                    <div class="fm-tools">
+                        <?= $tool('upload', 'Загрузить', 'upload') ?>
+                        <?= $tool('folder-plus', 'Создать папку', 'create') ?>
+                        <?= $tool('refresh', 'Обновить', 'refresh') ?>
+                        <?= $tool('folder-x', 'Удалить папку', 'delete-folder', ' data-fm-delete-folder') ?>
+                    </div>
+                </aside>
+                <div class="fm-main">
+                    <div class="fm-toolbar">
+                        <label class="fm-search"><?= $icon('search') ?>
+                            <input class="fm-search__input" type="search" placeholder="Введите название файла"
+                                   aria-label="Поиск по названию" autocomplete="off" data-fm-search></label>
+                        <span class="fm-toolbar__line" aria-hidden="true"></span>
+                        <button type="button" class="fm-sort" aria-haspopup="menu" aria-expanded="false" data-fm-sort>
+                            <span data-fm-sort-label>По названию</span><?= $icon('down') ?></button>
+                    </div>
+                    <div class="fm-board" data-fm-board>
+                        <div class="fm-files" role="listbox" aria-label="Файлы" data-fm-files></div>
+                        <div class="fm-state" data-fm-state hidden>
+                            <span class="fm-state__marker" data-fm-state-marker><?= $icon('file-search') ?></span>
+                            <p class="fm-state__title" data-fm-state-title></p>
+                            <p class="fm-state__text" data-fm-state-text></p>
+                        </div>
+                    </div>
+                    <div class="fm-bottom">
+                        <div class="fm-info" aria-live="polite">
+                            <p class="fm-info__name" data-fm-info-name></p>
+                            <p class="fm-info__meta" data-fm-info-meta></p>
+                        </div>
+                        <button type="button" class="fm-button fm-button_primary fm-done" data-fm-action="done" disabled>
+                            <?= $icon('check') ?>Готово</button>
+                    </div>
+                    <div class="fm-drop" data-fm-drop hidden><?= $icon('upload') ?>
+                        <p>Отпустите файлы, чтобы загрузить их в эту папку</p></div>
+                </div>
+            </div>
+            <div class="fm-tabbar">
+                <?= $tab('back', 'Назад', 'back') ?>
+                <?= $tab('upload', 'Загрузить', 'upload') ?>
+                <?= $tab('folder-plus', 'Создать', 'create') ?>
+                <?= $tab('refresh', 'Обновить', 'refresh') ?>
+                <?= $tab('check', 'Готово', 'done') ?>
+            </div>
+        </div>
+        <input class="fm-input" type="file" multiple hidden data-fm-input>
+        <div class="fm-pop" role="menu" data-fm-menu="file" hidden><span class="fm-pop__corner"></span>
+            <div class="fm-pop__box">
+                <?= $item('download', 'Скачать', 'download') ?>
+                <?= $item('edit', 'Переименовать', 'rename') ?>
+                <?= $item('link', 'Копировать путь', 'copy-path') ?>
+                <div class="fm-pop__line" role="separator"></div>
+                <?= $item('trash', 'Удалить', 'delete', 'fm-item_danger') ?>
+            </div>
+        </div>
+        <div class="fm-pop" role="menu" data-fm-menu="folder" hidden><span class="fm-pop__corner"></span>
+            <div class="fm-pop__box">
+                <?= $item('folder-plus', 'Создать папку', 'create') ?>
+                <?= $item('upload', 'Загрузить файлы', 'upload-to') ?>
+                <?= $item('edit', 'Переименовать', 'rename') ?>
+                <?= $item('link', 'Копировать путь', 'copy-path') ?>
+                <div class="fm-pop__line" role="separator"></div>
+                <?= $item('trash', 'Удалить', 'delete', 'fm-item_danger') ?>
+            </div>
+        </div>
+        <div class="fm-pop fm-pop_sort" role="menu" aria-label="Сортировка" data-fm-menu="sort" hidden>
+            <span class="fm-pop__corner"></span>
+            <div class="fm-pop__box">
+                <?php foreach (['name' => 'По названию', 'date' => 'Дата изменения', 'size' => 'Вес файла'] as $value => $label): ?>
+                    <button type="button" class="fm-item" role="menuitemradio" aria-checked="<?= $value === 'name' ? 'true' : 'false' ?>"
+                            data-fm-sort-value="<?= $value ?>"><span class="fm-item__label"><?= $e($label) ?></span></button>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <div class="fm-tip" role="tooltip" data-fm-tip-box><span class="fm-tip__corner"></span>
+            <div class="fm-tip__body" data-fm-tip-text></div></div>
+    </dialog>
+    <?= $modal(
         'sf-file-manager-rename',
         'Переименовать',
         'Введите новое название папки или файла.',
-        $field('Старое название', '', 'Предыдущее имя.', ['data-fm-old-name' => '', 'disabled' => ''])
-        . $field('Новое название', 'Новое имя', 'Без символов / и \.', ['data-fm-name' => '']),
+        $field('Старое название', '', 'Предыдущее имя.', 'data-fm-old-name disabled')
+        . $field('Новое название', 'Новое имя', 'Без символов / и \.', 'data-fm-name'),
+        'Отменить',
         'Применить',
         'rename-save',
     ) ?>
-    <?= $nameModal(
+    <?= $modal(
         'sf-file-manager-create',
         'Создать папку',
         'Введите название новой папки.',
-        $field('Название папки', 'Папка', 'Латиницей или кириллицей.', ['data-fm-name' => '']),
+        $field('Название папки', 'Папка', 'Латиницей или кириллицей.', 'data-fm-name'),
+        'Отменить',
         'Создать',
         'create-save',
     ) ?>
-    <div class="file-menu file-menu-theme_<?= $theme ?>" role="menu" data-fm-menu="file" hidden>
-        <?= $menuItem('download', 'Скачать', 'download') ?>
-        <?= $menuItem('edit', 'Переименовать', 'rename') ?>
-        <?= $menuItem('link', 'Копировать путь', 'copy-path') ?>
-        <hr class="file-menu__line">
-        <?= $menuItem('trash', 'Удалить', 'delete', 'file-menu__item_danger') ?>
-    </div>
-    <div class="file-menu file-menu-theme_<?= $theme ?>" role="menu" data-fm-menu="folder" hidden>
-        <?= $menuItem('folder-plus', 'Создать папку', 'create') ?>
-        <?= $menuItem('upload', 'Загрузить файлы', 'upload-to') ?>
-        <?= $menuItem('edit', 'Переименовать', 'rename') ?>
-        <?= $menuItem('link', 'Копировать путь', 'copy-path') ?>
-        <hr class="file-menu__line">
-        <?= $menuItem('trash', 'Удалить', 'delete', 'file-menu__item_danger') ?>
-    </div>
+    <?= $modal('sf-file-manager-confirm', 'Удалить файл?', 'Файл будет удалён сразу.', '', 'Отмена', 'Удалить', 'confirm-yes') ?>
+    <div class="fm-root fm-toasts" popover="manual" role="status" aria-live="polite" data-fm-theme="<?= $theme ?>"
+         data-fm-toasts></div>
 </div>
