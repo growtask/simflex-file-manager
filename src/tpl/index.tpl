@@ -3,8 +3,9 @@
 /**
  * Файловый менеджер (Figma SimflexCMS, страница Way-File): разметка окон на своём слое интерфейса, без компонентов
  * админки — как редактор texted. Окна — <dialog> (верхний слой браузера): окно менеджера file-window, окна действий
- * file-modal («Переименовать», «Создать папку», «Переместить», подтверждение удаления), меню file-menu и сортировки, подсказка,
- * тосты. Содержимое строит assets/js/file-manager.js по API Manager, стили — assets/styles/file-manager.css.
+ * file-modal («Переименовать», «Создать папку», «Переместить», подтверждение удаления, «Сжать перед загрузкой?»),
+ * меню file-menu и сортировки, подсказка, тосты. Содержимое строит assets/js/file-manager.js по API Manager,
+ * стили — assets/styles/file-manager.css.
  * @var string $fileManagerApi Адрес API (Manager::handleRequest())
  * @var string $fileManagerRoot Веб-путь корня файлов, например /uf
  * @var string $fileManagerAssets Веб-путь опубликованного каталога assets пакета
@@ -22,7 +23,8 @@ $icon = fn(string $name, string $class = '') => '<svg class="fm-icon' . ($class 
     . '" aria-hidden="true"><use href="' . $e($sprite) . '#fm-' . $name . '"></use></svg>';
 /** Кнопка-иконка (file-tool) с подсказкой */
 $tool = fn(string $name, string $label, string $action, string $extra = '') => '<button type="button" class="fm-tool'
-    . '" data-fm-action="' . $action . '" aria-label="' . $e($label) . '" data-fm-tip="' . $e($label) . '"' . $extra . '>'
+    . '" data-fm-action="' . $action . '" aria-label="' . $e($label) . '" data-fm-tip="' . $e($label) . '"'
+    . $extra . '>'
     . $icon($name) . '</button>';
 /** Пункт меню */
 $item = fn(string $name, string $label, string $action, string $class = '') => '<button type="button" class="fm-item'
@@ -35,16 +37,26 @@ $tab = fn(string $name, string $label, string $action, string $class = '') => '<
 /** Поле form-input: название, поле, подсказка */
 $field = fn(string $label, string $placeholder, string $hint, string $attributes) => '<label class="fm-field">'
     . '<span class="fm-field__label">' . $e($label) . '</span>'
-    . '<input class="fm-field__input" type="text" autocomplete="off" spellcheck="false" placeholder="' . $e($placeholder)
-    . '" ' . $attributes . '><span class="fm-field__hint">' . $e($hint) . '</span></label>';
+    . '<input class="fm-field__input" type="text" autocomplete="off" spellcheck="false"'
+    . ' placeholder="' . $e($placeholder) . '" ' . $attributes . '>'
+    . '<span class="fm-field__hint">' . $e($hint) . '</span></label>';
 /** Окно действия (file-modal): крестик снаружи, заголовок, текст, содержимое, «Отменить» и главная кнопка */
-$modal = fn(string $id, string $title, string $text, string $content, string $cancel, string $saveText, string $action) =>
+$modal = fn(
+    string $id,
+    string $title,
+    string $text,
+    string $content,
+    string $cancel,
+    string $saveText,
+    string $action,
+) =>
     '<dialog id="' . $id . '" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="' . $theme . '"'
     . ' aria-labelledby="' . $id . '-title">'
     . '<div class="fm-modal fm-dialog__box">'
     . '<button type="button" class="fm-modal__close" data-fm-close aria-label="Закрыть">' . $icon('close') . '</button>'
     . '<div class="fm-modal__box">'
-    . '<div class="fm-modal__head"><h2 class="fm-modal__title" id="' . $id . '-title" data-fm-title>' . $e($title) . '</h2>'
+    . '<div class="fm-modal__head">'
+    . '<h2 class="fm-modal__title" id="' . $id . '-title" data-fm-title>' . $e($title) . '</h2>'
     . '<p class="fm-modal__text" data-fm-text>' . $e($text) . '</p>'
     // файл стоит на страницах (API usage) — перед удалением и переименованием
     . '<p class="fm-modal__warning" role="alert" data-fm-warning hidden></p></div>'
@@ -104,7 +116,8 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                             <p class="fm-info__name" data-fm-info-name></p>
                             <p class="fm-info__meta" data-fm-info-meta></p>
                         </div>
-                        <button type="button" class="fm-button fm-button_primary fm-done" data-fm-action="done" disabled>
+                        <button type="button" class="fm-button fm-button_primary fm-done" data-fm-action="done"
+                                disabled>
                             <?= $icon('check') ?>Готово</button>
                     </div>
                     <div class="fm-drop" data-fm-drop hidden><?= $icon('upload') ?>
@@ -152,9 +165,12 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
         <div class="fm-pop fm-pop_sort" role="menu" aria-label="Сортировка" data-fm-menu="sort" hidden>
             <span class="fm-pop__corner"></span>
             <div class="fm-pop__box">
-                <?php foreach (['name' => 'По названию', 'date' => 'Дата изменения', 'size' => 'Вес файла'] as $value => $label): ?>
-                    <button type="button" class="fm-item" role="menuitemradio" aria-checked="<?= $value === 'name' ? 'true' : 'false' ?>"
-                            data-fm-sort-value="<?= $value ?>"><span class="fm-item__label"><?= $e($label) ?></span></button>
+                <?php $sorts = ['name' => 'По названию', 'date' => 'Дата изменения', 'size' => 'Вес файла']; ?>
+                <?php foreach ($sorts as $value => $label): ?>
+                    <button type="button" class="fm-item" role="menuitemradio"
+                            aria-checked="<?= $value === 'name' ? 'true' : 'false' ?>"
+                            data-fm-sort-value="<?= $value ?>">
+                        <span class="fm-item__label"><?= $e($label) ?></span></button>
                 <?php endforeach; ?>
             </div>
         </div>
@@ -180,12 +196,21 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
         'Создать',
         'create-save',
     ) ?>
-    <?= $modal('sf-file-manager-confirm', 'Удалить файл?', 'Файл будет удалён сразу.', '', 'Отмена', 'Удалить', 'confirm-yes') ?>
+    <?= $modal(
+        'sf-file-manager-confirm',
+        'Удалить файл?',
+        'Файл будет удалён сразу.',
+        '',
+        'Отмена',
+        'Удалить',
+        'confirm-yes',
+    ) ?>
     <?php /* «Переместить»: папка назначения выбирается пошагово — список вложенных папок, «назад» и путь */ ?>
     <dialog id="sf-file-manager-move" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="<?= $theme ?>"
             aria-labelledby="sf-file-manager-move-title">
         <div class="fm-modal fm-dialog__box">
-            <button type="button" class="fm-modal__close" data-fm-close aria-label="Закрыть"><?= $icon('close') ?></button>
+            <button type="button" class="fm-modal__close" data-fm-close aria-label="Закрыть">
+                <?= $icon('close') ?></button>
             <div class="fm-modal__box">
                 <div class="fm-modal__head">
                     <h2 class="fm-modal__title" id="sf-file-manager-move-title">Переместить</h2>
@@ -194,7 +219,8 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 </div>
                 <div class="fm-move">
                     <div class="fm-move__head">
-                        <button type="button" class="fm-tool fm-move__back" data-fm-move-back aria-label="На уровень выше">
+                        <button type="button" class="fm-tool fm-move__back" data-fm-move-back
+                                aria-label="На уровень выше">
                             <?= $icon('back') ?></button>
                         <nav class="fm-move__path" aria-label="Папка назначения" data-fm-move-path></nav>
                     </div>
@@ -214,7 +240,8 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
     <dialog id="sf-file-manager-compress" class="fm-root fm-dialog fm-dialog_modal" data-fm-theme="<?= $theme ?>"
             aria-labelledby="sf-file-manager-compress-title">
         <div class="fm-modal fm-dialog__box">
-            <button type="button" class="fm-modal__close" data-fm-close aria-label="Не загружать"><?= $icon('close') ?></button>
+            <button type="button" class="fm-modal__close" data-fm-close aria-label="Не загружать">
+                <?= $icon('close') ?></button>
             <div class="fm-modal__box">
                 <div class="fm-modal__head">
                     <h2 class="fm-modal__title" id="sf-file-manager-compress-title">Сжать перед загрузкой?</h2>
@@ -224,8 +251,10 @@ $modal = fn(string $id, string $title, string $text, string $content, string $ca
                 <label class="fm-check"><input type="checkbox" class="fm-check__input" data-fm-compress-remember>
                     <span>Запомнить выбор до конца работы</span></label>
                 <div class="fm-modal__footer">
-                    <button type="button" class="fm-button fm-button_gray fm-button_l" data-fm-action="compress-no">Как есть</button>
-                    <button type="button" class="fm-button fm-button_primary fm-button_l" data-fm-action="compress-yes">Сжать</button>
+                    <button type="button" class="fm-button fm-button_gray fm-button_l"
+                            data-fm-action="compress-no">Как есть</button>
+                    <button type="button" class="fm-button fm-button_primary fm-button_l"
+                            data-fm-action="compress-yes">Сжать</button>
                 </div>
             </div>
         </div>

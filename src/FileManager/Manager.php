@@ -5,6 +5,8 @@ namespace Simflex\FileManager;
 use JetBrains\PhpStorm\NoReturn;
 use Simflex\Core\Http\Api\ApiException;
 use Simflex\Core\Http\Api\JsonEnvelopeResponse;
+use Simflex\Core\Http\Request;
+use Simflex\Core\System\Container;
 
 class Manager
 {
@@ -66,6 +68,14 @@ class Manager
     /** @var string|false|null Путь к ffmpeg: null — ещё не искали, false — нет */
     protected static string|false|null $ffmpeg = null;
 
+    /**
+     * Признаки HTML, скрипта или PHP в файле (hasCode). Только длинные: короткие случайно встречаются в сжатых
+     * данных большой картинки
+     */
+    protected const CODE_PATTERN = '~<(?:script|html|body|iframe|frame|frameset|svg|math|object|embed|applet|meta'
+        . '|link|base|style|img|details|form|input|button|select|textarea|template|video|audio|marquee)[\s/>]'
+        . '|[\s/"\']on[a-z]{4,}\s*=|<\?php|<!doctype|javascript:~i';
+
     /** Методы API, которые меняют файлы */
     protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'move', 'upload'];
 
@@ -90,23 +100,34 @@ class Manager
     protected $usageFn = null;
     /** Адрес корня файлов на сайте (для поиска ссылок): /uf */
     protected string $rootUrl = '/uf';
+    /** Запрос к API: метод, параметры, файлы, заголовки */
+    protected Request $request;
 
     /**
      * @param string $root Каталог файлов (public/uf)
      * @param callable|null $authFn Доступ к файлам: fn(): bool
      * @param callable|null $csrfFn Проверка CSRF-токена изменяющего запроса: fn(): bool (ядро - Csrf::isValid())
+     * @param Request|null $request Запрос; null - текущий (Container::getRequest())
      */
-    public function __construct(string $root, $authFn, $csrfFn = null)
+    public function __construct(string $root, $authFn, $csrfFn = null, ?Request $request = null)
     {
         $this->rootDir = rtrim($root, '/\\');
-        $this->realRoot = (string)realpath($this->rootDir);
+        // разделитель - всегда «/»: на Windows realpath() отдаёт «\», а пути внутри корня собираются через «/»
+        $this->realRoot = static::normalizeSeparators((string)realpath($this->rootDir));
         $this->testAuthFn = $authFn;
         $this->csrfFn = $csrfFn;
+        $this->request = $request ?? Container::getRequest();
+    }
+
+    /** Путь с разделителем «/» (на Windows realpath() отдаёт «\») */
+    protected static function normalizeSeparators(string $path): string
+    {
+        return str_replace('\\', '/', $path);
     }
 
     /**
-     * Поиск ссылок на файл для метода usage: окно предупреждает перед удалением и переименованием, что файл стоит
-     * на страницах (ядро — System\FileUsage)
+     * Поиск ссылок на файл для метода usage: окно предупреждает перед удалением, переименованием и перемещением,
+     * что файл стоит на страницах (ядро — System\FileUsage)
      * @param callable $fn fn(string $url): array<string, int> — таблица => сколько записей содержат адрес
      * @param string $rootUrl Адрес корня файлов на сайте
      */
@@ -128,12 +149,12 @@ class Manager
             return [];
         }
         $url = $this->rootUrl . $this->relative($path) . (is_dir($path) ? '/' : '');
-        $out = [];
+        $usages = [];
         foreach (($this->usageFn)($url) as $table => $count) {
-            $out[] = ['table' => (string)$table, 'count' => (int)$count];
+            $usages[] = ['table' => (string)$table, 'count' => (int)$count];
         }
 
-        return $out;
+        return $usages;
     }
 
     /**
@@ -151,7 +172,7 @@ class Manager
             }
 
             // вызываются только методы API, а не любые методы класса
-            $method = (string)($_REQUEST['method'] ?? '');
+            $method = (string)$this->request->request('method', '');
             if (!in_array($method, self::API_METHODS, true)) {
                 throw ApiException::notFound('Неизвестное действие');
             }
@@ -176,7 +197,7 @@ class Manager
      */
     protected function checkModifyingRequest(): void
     {
-        if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
+        if (strtoupper($this->request->getRequestMethod()) !== 'POST') {
             throw new ApiException('Действие выполняется только запросом POST', 405);
         }
         if (!$this->isSameOriginRequest()) {
@@ -203,7 +224,7 @@ class Manager
             throw new ApiException('Каталог файлов не найден', 500);
         }
 
-        $relative ??= (string)($_REQUEST['path'] ?? '');
+        $relative ??= (string)$this->request->request('path', '');
         if ($relative !== '' && $relative[0] !== '/') {
             throw ApiException::badRequest('Неверный путь');
         }
@@ -234,6 +255,7 @@ class Manager
 
         // на случай подмены каталога между проверками: итог внутри корня
         $real = realpath($path);
+        $real = $real === false ? false : static::normalizeSeparators($real);
         if ($real === false || ($real !== $this->realRoot && !str_starts_with($real, $this->realRoot . '/'))) {
             throw ApiException::badRequest('Неверный путь');
         }
@@ -251,7 +273,7 @@ class Manager
      * Дерево папок от path. depth (параметр запроса) - сколько уровней вернуть: 1 - только вложенные папки
      * (окно подгружает дерево по уровням), 0 или нет - всё дерево. Узел: name, path, has_children, data
      * (вложенные узлы или null, если уровень не загружен)
-     * @param string $parent Parent directory
+     * @param string $parent Папка на диске, от которой строится дерево; пусто - параметр запроса path
      * @param int|null $depth Уровней ниже $parent; null - из запроса
      * @return array
      */
@@ -261,21 +283,21 @@ class Manager
         if (!is_dir($path)) {
             throw ApiException::notFound('Файл или папка не найдены');
         }
-        $depth ??= max(0, (int)($_REQUEST['depth'] ?? 0));
+        $depth ??= max(0, (int)$this->request->request('depth', 0));
 
-        $out = [];
-        foreach ($this->subdirectories($path) as $name) {
+        $nodes = [];
+        foreach ($this->getSubdirectories($path) as $name) {
             $dirPath = $path . '/' . $name;
-            $out[] = [
+            $nodes[] = [
                 'name' => $name,
                 'path' => $this->relative($dirPath),
-                'has_children' => (bool)$this->subdirectories($dirPath, 1),
+                'has_children' => (bool)$this->getSubdirectories($dirPath, 1),
                 'data' => $depth === 1 ? null : $this->getTree($dirPath, $depth ? $depth - 1 : 0),
             ];
         }
-        usort($out, fn(array $a, array $b) => strnatcasecmp($a['name'], $b['name']));
+        usort($nodes, fn(array $a, array $b) => strnatcasecmp($a['name'], $b['name']));
 
-        return $out;
+        return $nodes;
     }
 
     /**
@@ -283,7 +305,7 @@ class Manager
      * @param int $limit Сколько найти (0 - все): для has_children хватает одной
      * @return string[]
      */
-    protected function subdirectories(string $path, int $limit = 0): array
+    protected function getSubdirectories(string $path, int $limit = 0): array
     {
         $names = [];
         foreach (new \DirectoryIterator($path) as $dir) {
@@ -300,7 +322,8 @@ class Manager
     }
 
     /**
-     * Returns a file list within a directory
+     * Содержимое папки path: файлы и, при include_dirs, папки (у папки — число элементов и дата последнего
+     * изменения файла в ней). Скрытые (с точки) и символические ссылки не показываются
      * @return array
      */
     protected function getFileList(): array
@@ -310,87 +333,84 @@ class Manager
             throw ApiException::notFound('Файл или папка не найдены');
         }
 
-        $includeDirs = $_REQUEST['include_dirs'] ?? 0;
+        $includeDirs = (bool)$this->request->request('include_dirs', 0);
 
-        $out = [];
-        foreach (new \DirectoryIterator($path) as $dir) {
-            if (str_starts_with($dir->getFilename(), '.') || $dir->isLink()) {
+        $entries = [];
+        foreach (new \DirectoryIterator($path) as $entry) {
+            if (str_starts_with($entry->getFilename(), '.') || $entry->isLink()) {
                 continue;
             }
-            $itemPath = $path . '/' . $dir->getFilename();
-            $filePath = $this->relative($itemPath);
-            if ($dir->isDir()) {
+            $entryPath = $path . '/' . $entry->getFilename();
+            $relativePath = $this->relative($entryPath);
+            if ($entry->isDir()) {
                 if (!$includeDirs) {
                     continue;
                 }
 
-                // loop through insides and find out element count and last change date
-                $elCnt = 0;
-                $lastDate = 0;
-                foreach (new \DirectoryIterator($itemPath) as $d2) {
-                    if ($d2->isDot() || str_starts_with($d2->getFilename(), '.')) {
+                // число элементов папки и дата последнего изменения файла в ней
+                $childCount = 0;
+                $lastTime = 0;
+                foreach (new \DirectoryIterator($entryPath) as $child) {
+                    if ($child->isDot() || str_starts_with($child->getFilename(), '.')) {
                         continue;
                     }
 
-                    ++$elCnt;
-                    if (!$d2->isDir() && $lastDate < $d2->getMTime()) {
-                        $lastDate = $d2->getMTime();
+                    ++$childCount;
+                    if (!$child->isDir() && $lastTime < $child->getMTime()) {
+                        $lastTime = $child->getMTime();
                     }
                 }
 
                 // пустая папка — дата самой папки
-                $lastDate = $lastDate ?: $dir->getMTime();
-                $out[] = [
+                $lastTime = $lastTime ?: $entry->getMTime();
+                $entries[] = [
                     'type' => 'dir',
-                    'name' => $dir->getFilename(),
-                    'path' => $filePath,
-                    'count' => $elCnt,
-                    'edited' => $lastDate ? date('d.m.y H:i', $lastDate) : '',
-                    'mtime' => $lastDate,
+                    'name' => $entry->getFilename(),
+                    'path' => $relativePath,
+                    'count' => $childCount,
+                    'edited' => $lastTime ? date('d.m.y H:i', $lastTime) : '',
+                    'mtime' => $lastTime,
                 ];
             } else {
-                $out[] = [
+                $entries[] = [
                         'type' => 'file',
-                        'name' => $dir->getFilename(),
-                        'path' => $filePath,
-                    ] + $this->getFileInfo($dir);
+                        'name' => $entry->getFilename(),
+                        'path' => $relativePath,
+                    ] + $this->getFileInfo($entry);
             }
         }
 
-        return $out;
+        return $entries;
     }
 
     /**
-     * Returns file information
-     * @param \DirectoryIterator $it
+     * Сведения о файле для карточки: картинка ли, размер для показа, размеры картинки, дата изменения
      * @return array
      */
-    protected function getFileInfo(\DirectoryIterator $it): array
+    protected function getFileInfo(\DirectoryIterator $file): array
     {
-        $ext = strtolower($it->getExtension());
+        $extension = strtolower($file->getExtension());
+        $isPicture = in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'], true);
 
-        // test if this file is an image
-        $isPic = in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'], true);
-
-        // fetch image dimensions
-        $imgDimensions = '';
-        if ($isPic && $ext !== 'svg') {
-            $dimRaw = @getimagesize($it->getPathname());
-            $imgDimensions = $dimRaw ? $dimRaw[0] . 'x' . $dimRaw[1] . 'px' : '';
+        // ширина и высота картинки (у SVG их нет)
+        $dimensions = '';
+        if ($isPicture && $extension !== 'svg') {
+            $imageSize = @getimagesize($file->getPathname());
+            $dimensions = $imageSize ? $imageSize[0] . 'x' . $imageSize[1] . 'px' : '';
         }
 
-        $bytes = (int)$it->getSize();
-        [$size, $sizeExt] = static::formatSize($bytes);
+        $bytes = (int)$file->getSize();
+        [$size, $sizeUnit] = static::formatSize($bytes);
 
         return [
-            'is_pic' => $isPic,
+            'is_pic' => $isPicture,
             'size' => $size,
-            'size_ext' => $sizeExt,
-            'dimensions' => $imgDimensions,
-            'edited' => date('d.m.y H:i', $it->getMTime()),
+            'size_ext' => $sizeUnit,
+            'dimensions' => $dimensions,
+            'edited' => date('d.m.y H:i', $file->getMTime()),
             // размер в байтах и время изменения — для сортировки
             'bytes' => $bytes,
-            'mtime' => $it->getMTime(),
+            'mtime' => $file->getMTime(),
         ];
     }
 
@@ -420,8 +440,8 @@ class Manager
             return unlink($path);
         }
 
-        foreach (scandir($path) ?: [] as $f) {
-            if ($f !== '.' && $f !== '..' && !$this->rm($path . '/' . $f)) {
+        foreach (scandir($path) ?: [] as $name) {
+            if ($name !== '.' && $name !== '..' && !$this->rm($path . '/' . $name)) {
                 return false;
             }
         }
@@ -430,7 +450,7 @@ class Manager
     }
 
     /**
-     * Deletes the file by path
+     * Удаляет файл или папку path со всем содержимым (корень — нельзя)
      * @return array{}
      */
     protected function delete(): array
@@ -446,7 +466,7 @@ class Manager
     }
 
     /**
-     * Creates a directory in path
+     * Создаёт в папке path папку name
      * @return array{}
      */
     protected function createDir(): array
@@ -456,7 +476,7 @@ class Manager
             throw ApiException::badRequest('Неверный путь');
         }
 
-        $dirName = (string)($_REQUEST['name'] ?? '');
+        $dirName = (string)$this->request->request('name', '');
         if (!static::isAllowedDirName($dirName)) {
             throw ApiException::unprocessable('Недопустимое имя');
         }
@@ -473,7 +493,7 @@ class Manager
     }
 
     /**
-     * Renames a directory or a file
+     * Переименовывает файл или папку path в name (корень — нельзя)
      * @return array{}
      */
     protected function rename(): array
@@ -481,7 +501,7 @@ class Manager
         // корень каталога загрузок не переименовывается
         $path = $this->resolvePath(allowRoot: false);
 
-        $newName = (string)($_REQUEST['name'] ?? '');
+        $newName = (string)$this->request->request('name', '');
         // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.)
         if (is_file($path) ? !static::isAllowedFileName($newName) : !static::isAllowedDirName($newName)) {
             throw ApiException::unprocessable('Недопустимое имя');
@@ -514,7 +534,7 @@ class Manager
             throw ApiException::badRequest('Переместить можно только в папку');
         }
 
-        $items = $_POST['items'] ?? null;
+        $items = $this->request->post('items');
         if (!is_array($items) || !$items || count($items) > self::MOVE_MAX_ITEMS) {
             throw ApiException::badRequest('Не выбрано, что перемещать');
         }
@@ -543,8 +563,8 @@ class Manager
         $moved = [];
         foreach ($plan as $destination => $path) {
             if (!@rename($path, $destination)) {
-                $done = $moved ? sprintf('Перемещено %d из %d. ', count($moved), count($plan)) : '';
-                throw ApiException::forbidden($done . '«' . basename($path) . '»: нет прав на запись');
+                $progress = $moved ? sprintf('Перемещено %d из %d. ', count($moved), count($plan)) : '';
+                throw ApiException::forbidden($progress . '«' . basename($path) . '»: нет прав на запись');
             }
             $moved[] = $this->relative($destination);
         }
@@ -553,44 +573,42 @@ class Manager
     }
 
     /**
-     * Nice up $_FILES array
-     * @return array
+     * Загруженные файлы поля file[] по одному: [{name, type, tmp_name, error, size}, …] (в запросе они — массивы
+     * по ключам)
+     * @return array<int, array<string, mixed>>
      */
-    protected function fixFilesArray(): array
+    protected function getUploadedFiles(): array
     {
-        $out = [];
-        $names = (array)($_FILES['file']['name'] ?? []);
+        $upload = (array)$this->request->file('file');
+        $names = (array)($upload['name'] ?? []);
 
-        for ($i = 0; $i < count($names); ++$i) {
-            foreach (array_keys($_FILES['file']) as $k) {
-                $out[$i][$k] = ((array)$_FILES['file'][$k])[$i] ?? null;
+        $files = [];
+        foreach (array_keys($names) as $index) {
+            foreach (array_keys($upload) as $key) {
+                $files[$index][$key] = ((array)$upload[$key])[$index] ?? null;
             }
         }
 
-        return $out;
+        return array_values($files);
     }
 
     /**
-     * Converts PHP ini byte parameter to int representation
-     * @param string $ini
-     * @return int
+     * Размер из настройки PHP (post_max_size: 8M, 512K, 1G) в байтах
      */
     protected function convertToBytes(string $ini): int
     {
-        // test if it doesn't end with anything
+        // число без единицы
         if ((string)(int)$ini == $ini) {
             return (int)$ini;
         }
 
-        $num = (int)substr($ini, 0, strlen($ini) - 1);
-        $cnt = substr($ini, strlen($ini) - 1);
+        $number = (int)substr($ini, 0, -1);
 
-        // convert
-        return match (strtoupper($cnt)) {
-            'K' => $num * 1024,
-            'M' => $num * 1024 * 1024,
-            'G' => $num * 1024 * 1024 * 1024,
-            default => $num,
+        return match (strtoupper(substr($ini, -1))) {
+            'K' => $number * 1024,
+            'M' => $number * 1024 * 1024,
+            'G' => $number * 1024 * 1024 * 1024,
+            default => $number,
         };
     }
 
@@ -613,14 +631,16 @@ class Manager
         }
         header('Content-Type: application/octet-stream');
         header('Content-Length: ' . filesize($path));
-        header('Content-Disposition: attachment; filename="' . $fallback . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+        header('Content-Disposition: attachment; filename="' . $fallback . '"; filename*=UTF-8\'\''
+            . rawurlencode($name));
         header('X-Content-Type-Options: nosniff');
         readfile($path);
         exit;
     }
 
     /**
-     * Handle uploaded files: имя - латиницей (как в редакторе texted), занятое не перезаписывается (photo-2.webp).
+     * Загружает файлы file[] в папку path: имя - латиницей (как в редакторе texted), занятое не перезаписывается
+     * (photo-2.webp).
      * Сжатие — только если пользователь согласился (compress=1): JPEG, PNG и WebP — в WebP до IMAGE_MAX_SIDE,
      * видео — в MP4 до VIDEO_MAX_SIDE (нужен ffmpeg); сжатый файл остаётся, только если он легче или уменьшен.
      * Статус каждого файла - путь сохранённого файла от корня или код ошибки: error, forbidden, error_save,
@@ -629,8 +649,9 @@ class Manager
      */
     protected function upload(): array
     {
-        // test post size
-        if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $this->convertToBytes((string)ini_get('post_max_size'))) {
+        // тело запроса больше post_max_size: PHP отбросил и файлы, и параметры
+        $contentLength = (int)$this->request->server('CONTENT_LENGTH', 0);
+        if ($contentLength > $this->convertToBytes((string)ini_get('post_max_size'))) {
             throw new ApiException('Файл слишком большой', 413);
         }
 
@@ -639,13 +660,13 @@ class Manager
             throw ApiException::badRequest('Неверный путь');
         }
 
-        if (!isset($_FILES['file'])) {
+        if ($this->request->file('file') === null) {
             throw ApiException::badRequest('Файлы не выбраны');
         }
 
-        $compress = (string)($_REQUEST['compress'] ?? '0') === '1';
+        $compress = (string)$this->request->request('compress', '0') === '1';
         $fileStatus = [];
-        foreach ($this->fixFilesArray() as $file) {
+        foreach ($this->getUploadedFiles() as $file) {
             $fileStatus[] = $this->storeUploaded($file, $path, $compress);
         }
 
@@ -663,8 +684,8 @@ class Manager
         if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
             return 'too_large';
         }
-        $tmp = (string)($file['tmp_name'] ?? '');
-        if ($error !== UPLOAD_ERR_OK || $tmp === '' || !is_uploaded_file($tmp)) {
+        $uploadedPath = (string)($file['tmp_name'] ?? '');
+        if ($error !== UPLOAD_ERR_OK || $uploadedPath === '' || !is_uploaded_file($uploadedPath)) {
             return 'error';
         }
 
@@ -675,14 +696,14 @@ class Manager
         }
 
         $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-        if (in_array($extension, static::RAW_IMAGES, true) && static::hasCode($tmp)) {
+        if (in_array($extension, static::RAW_IMAGES, true) && static::hasCode($uploadedPath)) {
             return 'bad_image';
         }
 
         $target = null;
         $staged = @tempnam($dir, '.fm-');
         try {
-            if ($staged === false || !move_uploaded_file($tmp, $staged)) {
+            if ($staged === false || !move_uploaded_file($uploadedPath, $staged)) {
                 return 'error_save';
             }
             // сжатие — только с согласия пользователя (окно спрашивает перед загрузкой)
@@ -747,32 +768,32 @@ class Manager
             return false;
         }
 
-        $out = @tempnam($dir, '.fm-');
-        if ($out === false) {
+        $compressedPath = @tempnam($dir, '.fm-');
+        if ($compressedPath === false) {
             return false;
         }
         try {
             $isResized = false;
             if ($isImage) {
                 $before = @getimagesize($source);
-                $size = static::writeWebp($source, $out);
+                $size = static::writeWebp($source, $compressedPath);
                 $isResized = $before && max($size['width'], $size['height']) < max($before[0], $before[1]);
-                $result = [$out, 'webp'];
-            } elseif (static::writeMp4($source, $out)) {
-                $result = [$out, 'mp4'];
+                $compressed = [$compressedPath, 'webp'];
+            } elseif (static::writeMp4($source, $compressedPath)) {
+                $compressed = [$compressedPath, 'mp4'];
             } else {
-                @unlink($out);
+                @unlink($compressedPath);
                 return false;
             }
             // сжатый не легче исходного (файл уже был сжат) — остаётся исходный
-            if (!$isResized && filesize($out) >= filesize($source)) {
-                @unlink($out);
+            if (!$isResized && filesize($compressedPath) >= filesize($source)) {
+                @unlink($compressedPath);
                 return false;
             }
 
-            return $result;
+            return $compressed;
         } catch (\Throwable $e) {
-            @unlink($out);
+            @unlink($compressedPath);
             throw $e;
         }
     }
@@ -844,8 +865,9 @@ class Manager
             throw new \InvalidArgumentException('Недопустимые размеры изображения');
         }
         // GD держит в памяти исходник и уменьшенную копию (4 байта на пиксель и запас)
-        $k = min(1, static::IMAGE_MAX_SIDE / max($size[0], $size[1]));
-        static::ensureMemory((int)(($size[0] * $size[1] + $size[0] * $size[1] * $k * $k) * 5) + 32 * 1048576);
+        $scale = min(1, static::IMAGE_MAX_SIDE / max($size[0], $size[1]));
+        $pixels = $size[0] * $size[1];
+        static::ensureMemory((int)(($pixels + $pixels * $scale * $scale) * 5) + 32 * 1048576);
         $image = match ($size[2]) {
             IMAGETYPE_JPEG => @imagecreatefromjpeg($source),
             IMAGETYPE_PNG => @imagecreatefrompng($source),
@@ -863,8 +885,8 @@ class Manager
         $width = imagesx($image);
         $height = imagesy($image);
         if (max($width, $height) > static::IMAGE_MAX_SIDE) {
-            $k = static::IMAGE_MAX_SIDE / max($width, $height);
-            $scaled = imagescale($image, max(1, (int)round($width * $k)), max(1, (int)round($height * $k)));
+            $scale = static::IMAGE_MAX_SIDE / max($width, $height);
+            $scaled = imagescale($image, max(1, (int)round($width * $scale)), max(1, (int)round($height * $scale)));
             if ($scaled) {
                 // исходник освобождается присваиванием (imagedestroy() с PHP 8 ничего не делает)
                 $image = $scaled;
@@ -907,22 +929,22 @@ class Manager
      */
     public static function hasCode(string $path): bool
     {
-        $fh = @fopen($path, 'rb');
-        if (!$fh) {
+        $handle = @fopen($path, 'rb');
+        if (!$handle) {
             return true;
         }
         $tail = '';
         try {
-            while (!feof($fh)) {
-                $chunk = $tail . (string)fread($fh, 1 << 20);
-                // только длинные признаки: короткие случайно встречаются в сжатых данных большой картинки
-                if (preg_match('~<(?:script|html|body|iframe|frame|frameset|svg|math|object|embed|applet|meta|link|base|style|img|details|form|input|button|select|textarea|template|video|audio|marquee)[\s/>]|[\s/"\']on[a-z]{4,}\s*=|<\?php|<!doctype|javascript:~i', $chunk) === 1) {
+            while (!feof($handle)) {
+                // хвост прошлого куска: признак на стыке кусков тоже находится
+                $chunk = $tail . (string)fread($handle, 1 << 20);
+                if (preg_match(static::CODE_PATTERN, $chunk) === 1) {
                     return true;
                 }
                 $tail = substr($chunk, -64);
             }
         } finally {
-            fclose($fh);
+            fclose($handle);
         }
 
         return false;
@@ -1012,8 +1034,7 @@ class Manager
     }
 
     /**
-     * Tests whether the user is authenticated
-     * @return bool
+     * Есть ли у пользователя доступ к файлам (функция доступа не задана — есть)
      */
     protected function testAuth(): bool
     {
@@ -1027,15 +1048,15 @@ class Manager
      */
     protected function isSameOriginRequest(): bool
     {
-        $fetchSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+        $fetchSite = (string)$this->request->header('Sec-Fetch-Site');
         if ($fetchSite !== '') {
             return $fetchSite === 'same-origin';
         }
 
-        $source = $_SERVER['HTTP_ORIGIN'] ?? ($_SERVER['HTTP_REFERER'] ?? '');
+        $source = (string)($this->request->header('Origin') ?? $this->request->header('Referer'));
         $sourceHost = (string)parse_url($source, PHP_URL_HOST);
         $sourcePort = parse_url($source, PHP_URL_PORT);
-        $host = (string)($_SERVER['HTTP_HOST'] ?? '');
+        $host = $this->request->getHost();
         if ($sourceHost === '' || $host === '') {
             return false;
         }
