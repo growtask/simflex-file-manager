@@ -15,35 +15,35 @@
 use Simflex\Core\Layout\Components\Common\Modal\Layout as Modal;
 use Simflex\Core\Layout\Components\Common\Modal\ModalSize;
 use Simflex\Core\Layout\Components\Common\Modal\ModalTheme;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonSize;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonStyle;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\ButtonTheme;
-use Simflex\Core\Layout\Components\UI\Core\Buttons\Button\Layout as Button;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownSize;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\DropdownTheme;
-use Simflex\Core\Layout\Components\UI\Core\Dropdown\Layout as Dropdown;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\Layout as TextInput;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputSize;
-use Simflex\Core\Layout\Components\UI\Core\TextInput\TextInputTheme;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\Layout as Tooltip;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\TooltipPosition;
-use Simflex\Core\Layout\Components\UI\Core\Tooltip\TooltipTheme;
+use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainSize;
+use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainStyle;
+use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainTheme;
+use Simflex\Core\Layout\Components\UI\Button\ButtonMain\Layout as Button;
+use Simflex\Core\Layout\Components\UI\Dropdown\DropdownMain\DropdownMainSize;
+use Simflex\Core\Layout\Components\UI\Dropdown\DropdownMain\DropdownMainTheme;
+use Simflex\Core\Layout\Components\UI\Dropdown\DropdownMain\Layout as Dropdown;
+use Simflex\Core\Layout\Components\UI\Input\InputMain\Layout as TextInput;
+use Simflex\Core\Layout\Components\UI\Input\InputMain\InputMainSize;
+use Simflex\Core\Layout\Components\UI\Input\InputMain\InputMainTheme;
+use Simflex\Core\Layout\Components\UI\Tooltip\TooltipMain\Layout as Tooltip;
+use Simflex\Core\Layout\Components\UI\Tooltip\TooltipMain\TooltipMainPosition;
+use Simflex\Core\Layout\Components\UI\Tooltip\TooltipMain\TooltipMainTheme;
 use Simflex\Core\Layout\LayoutManager;
 
 LayoutManager::useStyle(dirname(__DIR__) . '/assets/styles/file-manager.scss');
 
 $sprite = $fileManagerAssets . '/img/icons.svg';
-$buttonTheme = ButtonTheme::from($theme);
+$buttonTheme = ButtonMainTheme::from($theme);
 /** Иконка набора file-icon */
 $icon = fn(string $name, string $class = 'fm-icon') => '<svg class="' . $class . '" aria-hidden="true"><use href="'
     . htmlspecialchars($sprite) . '#fm-' . $name . '"></use></svg>';
 /** Кнопка действия (file-tool) с подсказкой */
-$tool = fn(string $name, string $label, string $action, string $extra = '') => Tooltip::drawTooltip(
+$tool = fn(string $name, string $label, string $action, string $extra = '') => Tooltip::drawTooltipMain(
     trigger: '<button type="button" class="file-tool" data-fm-action="' . $action . '" aria-label="' . $label . '"'
         . $extra . '>' . $icon($name) . '</button>',
     text: $label,
-    position: TooltipPosition::Bottom,
-    theme: TooltipTheme::from($theme),
+    position: TooltipMainPosition::Bottom,
+    theme: TooltipMainTheme::from($theme),
 );
 /** Кнопка нижней панели (file-tabbar-item) */
 $tab = fn(string $name, string $label, string $action) => '<button type="button" class="file-tabbar__item"'
@@ -56,23 +56,23 @@ $menuItem = fn(string $name, string $label, string $action, string $class = '') 
 $nameModal = fn(string $id, string $title, string $action) => Modal::drawModal(
     id: $id,
     title: $title,
-    content: TextInput::drawInput(
+    content: TextInput::drawInputMain(
         placeholder: 'Название',
         labelText: 'Название',
-        size: TextInputSize::Small,
-        theme: TextInputTheme::from($theme),
+        size: InputMainSize::Small,
+        theme: InputMainTheme::from($theme),
         attributes: ['data-fm-name' => '', 'autocomplete' => 'off'],
     ),
-    footer: Button::drawButton(
+    footer: Button::drawButtonMain(
         text: 'Сохранить',
-        size: ButtonSize::Small,
+        size: ButtonMainSize::Small,
         theme: $buttonTheme,
         attributes: ['data-fm-action' => $action],
         iconLeft: 'check',
-    ) . Button::drawButton(
+    ) . Button::drawButtonMain(
         text: 'Отмена',
-        style: ButtonStyle::Secondary,
-        size: ButtonSize::Small,
+        style: ButtonMainStyle::Secondary,
+        size: ButtonMainSize::Small,
         theme: $buttonTheme,
         attributes: ['data-modal-close' => ''],
     ),
@@ -95,20 +95,20 @@ $window = '<div class="file-window__head">'
     . '</div></aside>'
     . '<div class="file-window__main">'
     . '<div class="file-window__toolbar">'
-    . TextInput::drawInput(
+    . TextInput::drawInputMain(
         className: 'file-window__search',
         placeholder: 'Введите название файла',
-        size: TextInputSize::Small,
-        theme: TextInputTheme::from($theme),
+        size: InputMainSize::Small,
+        theme: InputMainTheme::from($theme),
         icon: 'search',
         attributes: ['data-fm-search' => '', 'aria-label' => 'Поиск по названию', 'type' => 'search'],
     )
-    . Dropdown::drawSelect(
+    . Dropdown::drawDropdownMainSelect(
         name: '',
         options: ['name' => 'По названию', 'date' => 'По дате', 'size' => 'По размеру', 'type' => 'По типу'],
         value: 'name',
-        size: DropdownSize::Small,
-        theme: DropdownTheme::from($theme),
+        size: DropdownMainSize::Small,
+        theme: DropdownMainTheme::from($theme),
         className: 'file-window__sort',
         attributes: ['aria-label' => 'Сортировка'],
         inputAttributes: ['data-fm-sort' => ''],
@@ -123,10 +123,10 @@ $window = '<div class="file-window__head">'
     . '<div class="file-window__bottom">'
     . '<div class="file-window__info" data-fm-info><p class="file-window__info-name" data-fm-info-name></p>'
     . '<p class="file-window__info-meta" data-fm-info-meta></p></div>'
-    . Button::drawButton(
+    . Button::drawButtonMain(
         className: 'file-window__done',
         text: 'Готово',
-        size: ButtonSize::Small,
+        size: ButtonMainSize::Small,
         theme: $buttonTheme,
         attributes: ['data-fm-action' => 'done'],
         iconLeft: 'check',
