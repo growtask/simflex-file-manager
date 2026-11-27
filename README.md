@@ -16,7 +16,7 @@
 
 - `src/FileManager/Manager.php` — API (`?method=getTree|getFileList|download|delete|createDir|rename|upload`):
   корень каталога, проверка доступа, белый список расширений, изменяющие запросы — только со своего сайта;
-- `src/tpl/index.tpl` — окно на компонентах Layout ядра (`Common/Modal`, `Button`, `TextInput`, `Dropdown`,
+- `src/tpl/index.tpl` — окно на компонентах Layout ядра (`Base/Modal/ModalMain`, `Button`, `TextInput`, `Dropdown`,
   `Tooltip`);
 - `src/assets/styles/file-manager.scss` — стили на токенах ядра, собираются со стилями админки
   (`LayoutManager::useStyle()`);

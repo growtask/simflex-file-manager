@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Окно файлового менеджера (file-window) на Common/Modal ядра Simflex CMS: шапка с крошками и «Закрыть», дерево папок
+ * Окно файлового менеджера (file-window) на Base/Modal/ModalMain ядра Simflex CMS: шапка с крошками и «Закрыть», дерево папок
  * и кнопки папки (desktop), поиск и сортировка, сетка карточек (на планшете и телефоне — строки), сведения о файле
  * и «Готово», нижняя панель (планшет, телефон), окна «Переименовать» и «Новая папка», контекстное меню.
  * Содержимое строит assets/js/file-manager.js по API Manager. Стили — assets/styles/file-manager.scss (собираются
@@ -12,9 +12,9 @@
  * @var string $theme Тема админки: light или dark
  */
 
-use Simflex\Core\Layout\Components\Common\Modal\Layout as Modal;
-use Simflex\Core\Layout\Components\Common\Modal\ModalSize;
-use Simflex\Core\Layout\Components\Common\Modal\ModalTheme;
+use Simflex\Core\Layout\Components\Base\Modal\ModalMain\Layout as Modal;
+use Simflex\Core\Layout\Components\Base\Modal\ModalMain\ModalMainSize;
+use Simflex\Core\Layout\Components\Base\Modal\ModalMain\ModalMainTheme;
 use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainSize;
 use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainStyle;
 use Simflex\Core\Layout\Components\UI\Button\ButtonMain\ButtonMainTheme;
@@ -53,7 +53,7 @@ $menuItem = fn(string $name, string $label, string $action, string $class = '') 
     . ' class="file-menu__item ' . $class . '" role="menuitem" data-fm-action="' . $action . '">' . $icon($name)
     . '<span>' . $label . '</span></button>';
 /** Окно с полем имени: переименование, новая папка */
-$nameModal = fn(string $id, string $title, string $action) => Modal::drawModal(
+$nameModal = fn(string $id, string $title, string $action) => Modal::drawModalMain(
     id: $id,
     title: $title,
     content: TextInput::drawInputMain(
@@ -76,7 +76,7 @@ $nameModal = fn(string $id, string $title, string $action) => Modal::drawModal(
         theme: $buttonTheme,
         attributes: ['data-modal-close' => ''],
     ),
-    theme: ModalTheme::from($theme),
+    theme: ModalMainTheme::from($theme),
     className: 'file-modal',
 );
 
@@ -146,11 +146,11 @@ $window = '<div class="file-window__head">'
 ?>
 <div class="file-manager" data-fm-api="<?= htmlspecialchars($fileManagerApi) ?>"
      data-fm-root="<?= htmlspecialchars($fileManagerRoot) ?>" data-fm-sprite="<?= htmlspecialchars($sprite) ?>">
-    <?= Modal::drawModal(
+    <?= Modal::drawModalMain(
         id: 'sf-file-manager',
         content: $window,
-        size: ModalSize::Large,
-        theme: ModalTheme::from($theme),
+        size: ModalMainSize::Large,
+        theme: ModalMainTheme::from($theme),
         className: 'file-window file-window-theme_' . $theme,
         attributes: ['aria-label' => 'Файловый менеджер'],
     ) ?>
