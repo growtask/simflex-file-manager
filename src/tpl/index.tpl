@@ -69,7 +69,8 @@ $modal = fn(
 ?>
 <link rel="stylesheet" href="<?= $e($asset('styles/file-manager.css')) ?>">
 <div class="file-manager" data-fm-api="<?= $e($fileManagerApi) ?>" data-fm-root="<?= $e($fileManagerRoot) ?>"
-     data-fm-sprite="<?= $e($sprite) ?>">
+     data-fm-sprite="<?= $e($sprite) ?>"
+     data-fm-protected="<?= $e(json_encode(\Simflex\FileManager\Manager::PROTECTED_DIRS)) ?>">
     <dialog id="sf-file-manager" class="fm-root fm-dialog fm-dialog_window" data-fm-theme="<?= $theme ?>"
             aria-label="Файловый менеджер">
         <div class="fm-window fm-dialog__box">

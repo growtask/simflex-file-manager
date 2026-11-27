@@ -78,6 +78,9 @@ const parseAccept = (accept) => {
 };
 
 /** Расширение имени в нижнем регистре: photo.JPG → jpg, без точки — пусто */
+/** Сколько ждать поиска ссылок на файл (API usage), мс: дольше — «не удалось проверить» */
+const USAGE_TIMEOUT = 15000;
+
 const extensionOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
 /** Последний элемент пути: /images/a.png → a.png */
 const baseName = (path) => path.split('/').filter(Boolean).pop() ?? '';
@@ -101,6 +104,8 @@ if (root && win) {
     const api = root.dataset.fmApi;
     const filesRoot = root.dataset.fmRoot;
     const sprite = root.dataset.fmSprite;
+    // системные папки (Manager::PROTECTED_DIRS): их нельзя удалить, переименовать и переместить
+    const protectedDirs = new Set(JSON.parse(root.dataset.fmProtected || '[]'));
     const find = (selector) => win.querySelector(selector);
     const windowBox = find('.fm-window');
     const treeElement = find('[data-fm-tree]');
@@ -185,6 +190,9 @@ if (root && win) {
 
     /** Можно ли выбрать: папка — всегда, файл — если подходит под accept */
     const isAccepted = (item) => item.type === 'dir' || !state.accept || state.accept.has(extensionOf(item.name));
+
+    /** Можно ли отметить: подходит и не системная папка (её нельзя ни удалить, ни переместить) */
+    const isCheckable = (item) => isAccepted(item) && !protectedDirs.has(item.path);
 
     const getItem = (path) => state.items.find((item) => item.path === path)
         ?? {type: 'dir', path, name: baseName(path)};
@@ -272,6 +280,8 @@ if (root && win) {
         confirmDialog.querySelector('[data-fm-text]').textContent = text;
         const yes = confirmDialog.querySelector('[data-fm-action="confirm-yes"]');
         yes.textContent = yesText;
+        // прошлое окно могли закрыть, пока шла проверка ссылок
+        yes.disabled = false;
         let answer = false;
         const onYes = () => {
             answer = true;
@@ -404,7 +414,16 @@ if (root && win) {
         if (item.type === 'file' && !state.selected.has(item.path) && isAccepted(item) && !state.checking) {
             selectOnly(item.path);
         }
-        openMenu(menus[item.type === 'dir' ? 'folder' : 'file'], x, y);
+        const menu = menus[item.type === 'dir' ? 'folder' : 'file'];
+        // у системной папки нет «Выбрать», «Переименовать», «Переместить» и «Удалить»
+        const isProtected = protectedDirs.has(item.path);
+        menu.querySelectorAll('[data-fm-action="select-item"], [data-fm-action="rename"], [data-fm-action="move"], '
+            + '[data-fm-action="delete"]')
+            .forEach((menuItem) => {
+                menuItem.hidden = isProtected;
+            });
+        menu.querySelector('.fm-pop__line').hidden = isProtected;
+        openMenu(menu, x, y);
     };
 
     // стрелки ходят по пунктам открытого меню
@@ -562,6 +581,8 @@ if (root && win) {
                     return;
                 }
                 node.data = data;
+                // подгруженный уровень появляется плавно
+                state.justExpanded = path;
                 renderTree();
             }
         }
@@ -646,7 +667,7 @@ if (root && win) {
             if (!isAccepted(item)) {
                 card.classList.add('fm-card_disabled');
                 card.setAttribute('aria-disabled', 'true');
-            } else {
+            } else if (isCheckable(item)) {
                 const check = element('button', 'fm-card__check');
                 check.type = 'button';
                 check.tabIndex = -1;
@@ -733,7 +754,7 @@ if (root && win) {
         win.querySelectorAll('[data-fm-action="done"]').forEach((button) => {
             button.disabled = isDoneDisabled;
         });
-        find('[data-fm-delete-folder]').disabled = state.path === '';
+        find('[data-fm-delete-folder]').disabled = state.path === '' || protectedDirs.has(state.path);
     };
 
     /** @param {boolean} animate Карточки появляются мягко (после загрузки папки), а не при каждом выборе */
@@ -798,9 +819,12 @@ if (root && win) {
         state.anchor = null;
         state.failed = [];
         searchInput.value = '';
-        // путь до папки раскрыт в дереве (сама папка — нет: её вложенные видны в списке)
+        // путь до папки и сама папка раскрыты в дереве: её вложенные папки видны сразу (только что раскрытая —
+        // плавно)
         const parts = path.split('/').filter(Boolean);
-        parts.slice(0, -1).forEach((part, index) => state.expanded.add('/' + parts.slice(0, index + 1).join('/')));
+        const isNewlyExpanded = path !== '' && !state.expanded.has(path);
+        parts.forEach((part, index) => state.expanded.add('/' + parts.slice(0, index + 1).join('/')));
+        state.justExpanded = isNewlyExpanded ? path : null;
         renderCrumbs();
         renderTree();
         loadMissingLevels().catch(report);
@@ -834,7 +858,7 @@ if (root && win) {
      * отмечает этот файл (а не снимает выбор) и включает режим; Ctrl/⌘ (keep) оставляет и выбранный кликом
      */
     const toggleSelect = (path, {keep = false} = {}) => {
-        if (!isAccepted(getItem(path))) {
+        if (!isCheckable(getItem(path))) {
             return;
         }
         if (!state.checking) {
@@ -852,7 +876,7 @@ if (root && win) {
 
     /** Shift+клик: от прежнего до этого по видимому порядку */
     const selectRange = (path) => {
-        const visible = getVisibleItems().filter(isAccepted).map((item) => item.path);
+        const visible = getVisibleItems().filter(isCheckable).map((item) => item.path);
         const from = visible.indexOf(state.anchor);
         const to = visible.indexOf(path);
         if (from < 0 || to < 0) {
@@ -890,24 +914,52 @@ if (root && win) {
      * Ссылка на папку — ссылка на что-то в ней
      */
     const usageText = async (items) => {
-        const results = await Promise.all(items.map((item) => call('usage', {path: item.path}).catch(() => [])));
+        // ответ дольше USAGE_TIMEOUT — проверка не удалась (кнопка действия не ждёт бесконечно)
+        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), USAGE_TIMEOUT));
+        const results = await Promise.all(items.map((item) => Promise.race([
+            call('usage', {path: item.path}).catch(() => null),
+            timeout,
+        ])));
         const tables = new Map();
-        results.flat().forEach(({table, count}) => tables.set(table, (tables.get(table) ?? 0) + count));
+        results.filter(Boolean).flat().forEach(({table, count}) => tables.set(table, (tables.get(table) ?? 0) + count));
         const total = [...tables.values()].reduce((sum, count) => sum + count, 0);
-        return total ? `в ${total} ${plural(total, ['записи', 'записях', 'записях'])} (${[...tables.keys()].join(', ')})` : '';
+        return {
+            text: total
+                ? `в ${total} ${plural(total, ['записи', 'записях', 'записях'])} (${[...tables.keys()].join(', ')})`
+                : '',
+            isFailed: results.includes(null),
+        };
     };
 
-    /** Предупреждение в окне: ссылки перестанут работать. Окно открыто сразу, предупреждение — когда ответит сервер */
-    const warnUsage = (dialog, items, after) => {
+    /**
+     * Предупреждение в окне: ссылки перестанут работать. Окно открыто сразу; пока сервер ищет ссылки, кнопка
+     * действия недоступна (setBusy) — удалить, переименовать или переместить до предупреждения нельзя. Проверка
+     * не удалась — тоже предупреждение
+     * @param {string} actionName Действие в родительном падеже: «удаления», «переименования», «перемещения»
+     * @param {function(boolean): void} setBusy Кнопка действия: true — недоступна, false — снова доступна
+     */
+    const warnUsage = (dialog, items, actionName, setBusy) => {
         const warning = dialog.querySelector('[data-fm-warning]');
-        warning.hidden = true;
+        warning.textContent = 'Проверяем, есть ли ссылки на страницах сайта…';
+        warning.dataset.fmState = 'checking';
+        warning.hidden = false;
+        setBusy(true);
         const request = Symbol('usage');
         dialog.usageRequest = request;
-        usageText(items).then((text) => {
-            if (text && dialog.open && dialog.usageRequest === request) {
-                const what = items.length > 1 ? 'них' : (items[0].type === 'dir' ? 'файлы папки' : 'файл');
-                warning.textContent = `Ссылки на ${what} есть ${text}. ${after}`;
-                warning.hidden = false;
+        return usageText(items).then(({text, isFailed}) => {
+            if (!dialog.open || dialog.usageRequest !== request) {
+                return;
+            }
+            setBusy(false);
+            const what = items.length > 1 ? 'них' : (items[0].type === 'dir' ? 'файлы папки' : 'файл');
+            delete warning.dataset.fmState;
+            if (text) {
+                warning.textContent = `Ссылки на ${what} есть ${text}. После ${actionName} они перестанут работать.`;
+            } else if (isFailed) {
+                warning.textContent = `Не удалось проверить ссылки на ${what}: если они есть на страницах, после `
+                    + `${actionName} перестанут работать.`;
+            } else {
+                warning.hidden = true;
             }
         });
     };
@@ -929,6 +981,10 @@ if (root && win) {
     };
 
     const saveName = async (dialog, method) => {
+        // кнопка недоступна (идёт проверка ссылок) — Enter тоже не сохраняет
+        if (dialog.querySelector('.fm-modal__footer [data-fm-action]').disabled) {
+            return;
+        }
         const input = dialog.querySelector('[data-fm-name]');
         const name = input.value.trim();
         if (name === '') {
@@ -965,19 +1021,44 @@ if (root && win) {
         }
     };
 
+    /** Системная папка среди элементов — сообщение и true (действие не выполняется) */
+    const hasProtected = (items, actionName) => {
+        const item = items.find((candidate) => protectedDirs.has(candidate.path));
+        if (item) {
+            toast(`Системную папку «${item.name}» нельзя ${actionName}`, 'error');
+        }
+        return Boolean(item);
+    };
+
+    /** Имена для подтверждения: «a.png», «b.png» и ещё 3 */
+    const namesText = (items) => {
+        const names = items.slice(0, 3).map((item) => `«${item.name}»`).join(', ');
+        const rest = items.length - 3;
+        return rest > 0 ? `${names} и ещё ${rest}` : names;
+    };
+
     const remove = async (items) => {
-        if (!items.length) {
+        // окно подтверждения уже открыто (повторный Delete) — второй раз не спрашиваем и не удаляем
+        if (!items.length || confirmDialog.open || hasProtected(items, 'удалить')) {
             return;
         }
-        // тексты — Figma file-modal (delfolder, delfile)
+        // тексты — Figma file-modal (delfolder, delfile); всегда видно, что именно удалится
         const isFolder = items.length === 1 && items[0].type === 'dir';
+        const hasFolders = items.some((item) => item.type === 'dir');
         const [title, text] = items.length > 1
-            ? ['Удалить выбранное?', `Будет удалено: ${items.length}. Всё удалится сразу.`]
+            ? ['Удалить выбранное?', `Будет удалено: ${items.length} — ${namesText(items)}.`
+                + (hasFolders ? ' Папки — вместе со всем, что в них.' : '') + ' Всё удалится сразу.']
             : (isFolder
-                ? ['Удалить папку?', 'Папка и всё, что в ней, будут удалены сразу.']
-                : ['Удалить файл?', 'Файл будет удалён сразу.']);
+                ? ['Удалить папку?', `Папка «${items[0].name}» и всё, что в ней, будут удалены сразу.`]
+                : ['Удалить файл?', `Файл «${items[0].name}» будет удалён сразу.`]);
         const confirmed = confirmAction(title, text);
-        warnUsage(confirmDialog, items, 'После удаления они перестанут работать.');
+        const yes = confirmDialog.querySelector('[data-fm-action="confirm-yes"]');
+        warnUsage(confirmDialog, items, 'удаления', (isBusy) => {
+            yes.disabled = isBusy;
+            if (!isBusy) {
+                yes.focus({preventScroll: true});
+            }
+        });
         if (!await confirmed) {
             return;
         }
@@ -1008,7 +1089,7 @@ if (root && win) {
     /* ---------- перемещение ---------- */
 
     /** Что перемещается, из какой папки, какая папка открыта в окне выбора; номер запроса — устаревший не рисуется */
-    const moving = {items: [], from: '', path: '', request: 0};
+    const moving = {items: [], from: '', path: '', request: 0, isChecking: false};
 
     /** Папка — одна из перемещаемых или внутри неё: туда нельзя */
     const isMovedPath = (path) => moving.items.some((item) => item.type === 'dir'
@@ -1042,7 +1123,9 @@ if (root && win) {
         // длинный путь — виден конец
         pathElement.scrollLeft = pathElement.scrollWidth;
         moveDialog.querySelector('[data-fm-move-back]').disabled = moving.path === '';
-        moveDialog.querySelector('[data-fm-action="move-here"]').disabled = moving.path === moving.from;
+        // пока ищутся ссылки на перемещаемое — тоже недоступна
+        moveDialog.querySelector('[data-fm-action="move-here"]').disabled = moving.path === moving.from
+            || moving.isChecking;
     };
 
     /** Открыть папку в окне выбора: её вложенные папки (getTree depth=1) */
@@ -1085,7 +1168,7 @@ if (root && win) {
 
     /** «Переместить»: окно выбора папки, открыто там, где элементы лежат сейчас */
     const openMove = (items) => {
-        if (!items.length) {
+        if (!items.length || hasProtected(items, 'переместить')) {
             return;
         }
         moving.items = items;
@@ -1095,7 +1178,10 @@ if (root && win) {
             : `Откройте папку, куда переместить ${items[0].type === 'dir' ? 'папку' : 'файл'} «${items[0].name}».`;
         showDialog(moveDialog);
         moveBrowse(moving.from);
-        warnUsage(moveDialog, items, 'После перемещения они перестанут работать.');
+        warnUsage(moveDialog, items, 'перемещения', (isBusy) => {
+            moving.isChecking = isBusy;
+            renderMovePath();
+        });
         moveDialog.querySelector('[data-fm-move-back]').focus({preventScroll: true});
     };
 
@@ -1286,7 +1372,8 @@ if (root && win) {
         }
     };
 
-    const selectedItems = () => state.items.filter((item) => state.selected.has(item.path));
+    /** Отмеченные, которые видно: скрытые поиском не удаляются и не перемещаются */
+    const selectedItems = () => getVisibleItems().filter((item) => state.selected.has(item.path));
 
     const runAction = (action, item = null) => {
         closeMenus();
@@ -1310,7 +1397,7 @@ if (root && win) {
                 break;
             case 'select-item':
                 // «Выбрать» в меню (телефон): отметить и включить режим отметки
-                if (!state.selected.has(item.path) || !state.checking) {
+                if (isCheckable(item) && (!state.selected.has(item.path) || !state.checking)) {
                     state.checking = true;
                     state.selected.add(item.path);
                     state.anchor = item.path;
@@ -1345,9 +1432,14 @@ if (root && win) {
                 }
                 break;
             case 'rename':
+                if (hasProtected([item], 'переименовать')) {
+                    break;
+                }
                 state.target = item;
                 openNameDialog(renameDialog, item.name);
-                warnUsage(renameDialog, [item], 'После переименования они перестанут работать.');
+                warnUsage(renameDialog, [item], 'переименования', (isBusy) => {
+                    renameDialog.querySelector('[data-fm-action="rename-save"]').disabled = isBusy;
+                });
                 break;
             case 'copy-path':
                 copyPath(item);
@@ -1522,7 +1614,7 @@ if (root && win) {
             toggleSelect(path);
         } else if (event.key === 'Delete') {
             event.preventDefault();
-            remove(state.selected.size ? selectedItems() : [getItem(path)]);
+            remove(state.selected.has(path) ? selectedItems() : [getItem(path)]);
         } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             event.preventDefault();
             const rect = card.getBoundingClientRect();

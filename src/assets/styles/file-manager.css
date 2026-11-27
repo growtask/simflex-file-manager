@@ -925,6 +925,11 @@ button.fm-crumbs__item:hover {
     animation: fm-pop-in 160ms var(--fm-ease);
 }
 
+/* пункт, скрытый для системной папки */
+.fm-pop__box > [hidden] {
+    display: none;
+}
+
 .fm-pop[hidden] {
     display: none;
 }
@@ -1106,6 +1111,12 @@ button.fm-crumbs__item:hover {
 
 .fm-modal__warning[hidden] {
     display: none;
+}
+
+/* пока ищутся ссылки на файл — нейтральная плашка, кнопка действия недоступна */
+.fm-modal__warning[data-fm-state="checking"] {
+    background: var(--fm-field);
+    color: var(--fm-desc);
 }
 
 .fm-modal__close {

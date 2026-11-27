@@ -62,6 +62,12 @@ class Manager
     protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'compression', 'delete', 'createDir',
         'rename', 'move', 'upload'];
 
+    /**
+     * Системные папки от корня: их нельзя удалить, переименовать и переместить (содержимое — можно). В них ядро,
+     * поля-таблицы и редактор texted кладут загруженные файлы (uf/images|video|audio|files/...)
+     */
+    public const PROTECTED_DIRS = ['/images', '/files', '/video', '/audio'];
+
     /** Больше стольких элементов за один запрос move не перемещается */
     public const MOVE_MAX_ITEMS = 500;
 
@@ -263,6 +269,17 @@ class Manager
         return $path;
     }
 
+    /**
+     * Системная папка (PROTECTED_DIRS) не удаляется, не переименовывается и не перемещается
+     * @throws ApiException 403
+     */
+    protected function checkNotProtected(string $path, string $actionName): void
+    {
+        if (is_dir($path) && in_array($this->relative($path), static::PROTECTED_DIRS, true)) {
+            throw ApiException::forbidden('Системную папку «' . basename($path) . '» нельзя ' . $actionName);
+        }
+    }
+
     /** Путь от корня файлов для ответа: /images/a.png */
     protected function relative(string $path): string
     {
@@ -455,8 +472,9 @@ class Manager
      */
     protected function delete(): array
     {
-        // корень каталога загрузок не удаляется
+        // корень каталога загрузок и системные папки не удаляются
         $path = $this->resolvePath(allowRoot: false);
+        $this->checkNotProtected($path, 'удалить');
 
         if (!$this->rm($path)) {
             throw ApiException::forbidden('Не удалось удалить: нет прав на запись');
@@ -498,8 +516,9 @@ class Manager
      */
     protected function rename(): array
     {
-        // корень каталога загрузок не переименовывается
+        // корень каталога загрузок и системные папки не переименовываются
         $path = $this->resolvePath(allowRoot: false);
+        $this->checkNotProtected($path, 'переименовать');
 
         $newName = (string)$this->request->request('name', '');
         // файлу - только безопасное расширение, папке - имя не с точки (.htaccess и т.п.)
@@ -546,6 +565,7 @@ class Manager
                 throw ApiException::badRequest('Неверный путь');
             }
             $path = $this->resolvePath(allowRoot: false, relative: $relative);
+            $this->checkNotProtected($path, 'переместить');
             $name = basename($path);
             if (dirname($path) === $target) {
                 throw ApiException::unprocessable("«{$name}» уже в этой папке");
