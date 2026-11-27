@@ -1,8 +1,8 @@
 /**
- * Файловый менеджер Simflex (ES-модуль, без зависимостей): окна из tpl/index.tpl, данные — API Manager
- * (data-fm-api: ?method=getTree|getFileList|download|delete|createDir|rename|upload). Интерфейс свой, независимый
- * от админки (как редактор texted): окна — <dialog> (верхний слой: открытое последним всегда сверху), свои меню,
- * подсказка, подтверждение и тосты.
+ * Файловый менеджер (ES-модуль, без зависимостей): окна из tpl/index.tpl, данные — API Manager
+ * (data-fm-api: ?method=getTree|getFileList|download|usage|delete|createDir|rename|move|upload). Интерфейс свой,
+ * независимый от страницы: окна — <dialog> (верхний слой: открытое последним всегда сверху), свои меню,
+ * подсказка, подтверждение и уведомления.
  *
  * Открытие: window.fileManager.open({multiple, accept, onSelect, onCancel, select}) — окно выбора файлов.
  * Выбранные файлы [{path, url, name, isImage}] (path — от корня файлов, url — с корнем, например /uf/images/a.png)
@@ -78,6 +78,10 @@ const parseAccept = (accept) => {
 };
 
 /** Расширение имени в нижнем регистре: photo.JPG → jpg, без точки — пусто */
+/** Сколько видно уведомление, мс: обычное и об ошибке */
+const TOAST_TIMEOUT = 3500;
+const TOAST_ERROR_TIMEOUT = 5000;
+
 /** Сколько ждать поиска ссылок на файл (API usage), мс: дольше — «не удалось проверить» */
 const USAGE_TIMEOUT = 15000;
 
@@ -200,7 +204,7 @@ if (root && win) {
     /* ---------- окна (<dialog>) ---------- */
 
     /**
-     * Открывает окно поверх всех (верхний слой браузера). Окно админки (Common/Modal) делает остальную страницу
+     * Открывает окно поверх всех (верхний слой браузера). Модальное окно страницы может сделать остальную страницу
      * недоступной (inert) — вместе с менеджером, поэтому на время своих окон контейнер это снимает
      */
     const showDialog = (dialog) => {
@@ -223,7 +227,7 @@ if (root && win) {
     dialogs.forEach((dialog) => {
         dialog.addEventListener('close', () => {
             dialog.classList.remove('is-open');
-            // все окна менеджера закрыты, а окно админки ещё открыто — контейнер снова недоступен, как был
+            // все окна менеджера закрыты, а окно страницы ещё открыто (html.modal-open) — контейнер снова недоступен
             if (!dialogs.some((item) => item.open) && root.dataset.fmInert !== undefined) {
                 delete root.dataset.fmInert;
                 if (document.documentElement.classList.contains('modal-open')) {
@@ -237,7 +241,7 @@ if (root && win) {
                 hideDialog(dialog);
             }
         });
-        // клавиши окна не доходят до страницы: Esc и Tab окна админки под менеджером не срабатывают.
+        // клавиши окна не доходят до страницы: Esc и Tab окна страницы под менеджером не срабатывают.
         // Esc закрывает только это окно (в окне менеджера сначала меню): браузер иначе может закрыть
         // по одному Esc сразу несколько окон, открытых без нажатия пользователя
         dialog.addEventListener('keydown', (event) => {
@@ -274,7 +278,7 @@ if (root && win) {
     window.visualViewport?.addEventListener('resize', keyboardOffset);
     window.visualViewport?.addEventListener('scroll', keyboardOffset);
 
-    /** Подтверждение (Figma file-modal delfile, delfolder): Promise<boolean> */
+    /** Подтверждение (удаление файла, папки, выбранного): Promise<boolean> */
     const confirmAction = (title, text, yesText = 'Удалить') => new Promise((resolve) => {
         confirmDialog.querySelector('[data-fm-title]').textContent = title;
         confirmDialog.querySelector('[data-fm-text]').textContent = text;
@@ -298,9 +302,65 @@ if (root && win) {
 
     /* ---------- тосты ---------- */
 
+    /** Открытые уведомления (не закрываются), новое — последним */
+    const openToasts = () => [...toastsElement.children].filter((item) => !item.classList.contains('is-closing'));
+
+    /**
+     * Колода уведомлений: новое спереди, прежние за ним — чуть меньше и выглядывают сверху; expanded — списком
+     * (курсор над стопкой)
+     */
+    const layoutToasts = (expanded) => {
+        let y = 0;
+        openToasts().reverse().forEach((item, index) => {
+            if (expanded) {
+                item.style.setProperty('--toast-y', `${-y}px`);
+                item.style.setProperty('--toast-scale', '1');
+                y += item.offsetHeight + 8;
+            } else {
+                item.style.setProperty('--toast-y', `${-index * 8}px`);
+                item.style.setProperty('--toast-scale', String(1 - index * 0.05));
+            }
+            item.toggleAttribute('data-back', !expanded && index > 0);
+            item.style.zIndex = String(10 - index);
+        });
+    };
+
+    const closeToast = (item) => {
+        if (!item || item.classList.contains('is-closing')) {
+            return;
+        }
+        clearTimeout(item.closeTimer);
+        item.classList.add('is-closing');
+        layoutToasts(toastsElement.matches(':hover'));
+        setTimeout(() => {
+            item.remove();
+            if (!toastsElement.children.length && toastsElement.matches(':popover-open')) {
+                toastsElement.hidePopover();
+            }
+        }, 160);
+    };
+
+    /** Закрыть уведомление через ms; пока курсор мыши над ним — время стоит */
+    const scheduleToast = (item, ms) => {
+        clearTimeout(item.closeTimer);
+        item.closeStarted = Date.now();
+        item.closeLeft = ms;
+        item.closeTimer = setTimeout(() => closeToast(item), ms);
+    };
+
     const toast = (message, type = 'success') => {
         if (!toastsElement.showPopover) {
             window.alert(message);
+            return;
+        }
+        const timeout = type === 'error' ? TOAST_ERROR_TIMEOUT : TOAST_TIMEOUT;
+        // то же сообщение уже на экране (несколько одинаковых ошибок подряд) — продлеваем его, а не множим
+        const same = openToasts().find((item) => item.dataset.fmMessage === message && item.dataset.fmType === type);
+        if (same) {
+            scheduleToast(same, timeout);
+            same.classList.remove('fm-toast_bump');
+            void same.offsetWidth;
+            same.classList.add('fm-toast_bump');
             return;
         }
         // поверх всех открытых окон: показанный последним слой — верхний
@@ -308,21 +368,46 @@ if (root && win) {
             toastsElement.hidePopover();
         }
         toastsElement.showPopover();
-        // success — зелёный, error — красный, info — тёмный (Figma Feedback/toast)
-        const item = element('div', `fm-toast fm-toast_${type}`, message);
-        toastsElement.append(item);
-        while (toastsElement.children.length > 3) {
-            toastsElement.firstElementChild.remove();
-        }
-        setTimeout(() => {
-            item.classList.add('is-closing');
+        // success — зелёный, error — красный, info — тёмный с полоской оставшегося времени
+        const item = element('div', `fm-toast fm-toast_${type}`);
+        item.dataset.fmMessage = message;
+        item.dataset.fmType = type;
+        item.append(element('p', 'fm-toast__text', message));
+        const timer = element('span', 'fm-toast__timer');
+        timer.style.animationDuration = `${timeout}ms`;
+        item.append(timer);
+        // только мышь: касание на телефоне браузер выдаёт за наведение без ухода — уведомление зависло бы
+        item.addEventListener('pointerenter', (event) => {
+            if (event.pointerType !== 'mouse' || item.isPaused) {
+                return;
+            }
+            item.isPaused = true;
+            clearTimeout(item.closeTimer);
+            item.closeLeft -= Date.now() - item.closeStarted;
+            timer.style.animationPlayState = 'paused';
+            layoutToasts(true);
+        });
+        item.addEventListener('pointerleave', (event) => {
+            if (event.pointerType !== 'mouse' || !item.isPaused) {
+                return;
+            }
+            item.isPaused = false;
+            scheduleToast(item, Math.max(300, item.closeLeft));
+            timer.style.animationPlayState = 'running';
             setTimeout(() => {
-                item.remove();
-                if (!toastsElement.children.length && toastsElement.matches(':popover-open')) {
-                    toastsElement.hidePopover();
+                if (!toastsElement.matches(':hover')) {
+                    layoutToasts(false);
                 }
-            }, 160);
-        }, type === 'error' ? 5000 : 3000);
+            }, 30);
+        });
+        // не больше трёх: старые закрываются
+        const open = openToasts();
+        while (open.length >= 3) {
+            closeToast(open.shift());
+        }
+        toastsElement.append(item);
+        layoutToasts(false);
+        scheduleToast(item, timeout);
     };
 
     const report = (error) => {
@@ -452,8 +537,9 @@ if (root && win) {
         let url = `${api}?method=${method}`;
         let options = {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}, signal};
         if (isModifying) {
-            // CSRF-токен сессии админки: без него сервер изменяющий запрос не принимает
-            options.headers['X-CSRF-Token'] = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+            // CSRF-токен (шаблон или <meta name="csrf-token"> страницы): сервер с проверкой без него не примет
+            options.headers['X-CSRF-Token'] = root.dataset.fmCsrf
+                || document.querySelector('meta[name="csrf-token"]')?.content || '';
             const body = new FormData();
             // список — как key[] (PHP соберёт массив)
             Object.entries(params).forEach(([key, value]) => (Array.isArray(value)
@@ -466,7 +552,16 @@ if (root && win) {
         } else {
             url += '&' + new URLSearchParams(params).toString();
         }
-        const response = await fetch(url, options);
+        let response;
+        try {
+            response = await fetch(url, options);
+        } catch (error) {
+            // отмена запроса — как есть; иначе сервер недоступен (браузер пишет «Failed to fetch»)
+            if (error?.name === 'AbortError') {
+                throw error;
+            }
+            throw new Error('Нет связи с сервером. Проверьте подключение и повторите');
+        }
         let json = null;
         try {
             json = await response.json();
@@ -617,10 +712,16 @@ if (root && win) {
 
     /* ---------- файлы ---------- */
 
+    const byName = (a, b) => a.name.localeCompare(b.name, 'ru', {numeric: true});
+    /**
+     * Сортировка: по названию — А→Я, по дате — новые первыми, по весу — тяжёлые первыми (у папки веса нет — по числу
+     * элементов). Равные — по названию, чтобы порядок не прыгал
+     */
     const compare = {
-        name: (a, b) => a.name.localeCompare(b.name, 'ru', {numeric: true}),
-        date: (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0),
-        size: (a, b) => (b.bytes ?? 0) - (a.bytes ?? 0),
+        name: byName,
+        date: (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0) || byName(a, b),
+        size: (a, b) => (a.type === 'dir' ? (b.count ?? 0) - (a.count ?? 0) : (b.bytes ?? 0) - (a.bytes ?? 0))
+            || byName(a, b),
     };
 
     const getVisibleItems = () => {
@@ -673,7 +774,7 @@ if (root && win) {
                 check.tabIndex = -1;
                 check.setAttribute('aria-label', `Отметить «${item.name}»`);
                 check.append(icon('checkbox-off'));
-                // в карточке, а не в превью: на телефоне галочка стоит слева от превью (Figma file-card-mobile)
+                // в карточке, а не в превью: на телефоне галочка стоит слева от превью
                 card.append(check);
             }
             preview.append(element('span', 'fm-card__badge', sizeText(item)));
@@ -719,7 +820,7 @@ if (root && win) {
             stateElement.prepend(element('span', 'fm-spinner'));
         }
         const isSearch = searchInput.value.trim() !== '';
-        // тексты — Figma file-window empty, no-results; на телефоне перетаскивать некуда — кнопка внизу
+        // пустая папка и пустой поиск; на телефоне перетаскивать некуда — кнопка внизу
         find('[data-fm-state-title]').textContent = state.loading ? '' : (isSearch ? 'Ничего не найдено' : 'В папке пока нет файлов');
         find('[data-fm-state-text]').textContent = state.loading ? '' : (isSearch
             ? 'Попробуйте изменить запрос.'
@@ -744,7 +845,7 @@ if (root && win) {
                 : [`Вес: ${sizeText(item)}`, item.dimensions && `Размер: ${item.dimensions.replace('x', '×').replace('px', ' px')}`,
                     `Изменён: ${item.edited}`].filter(Boolean).join('   ');
         } else {
-            // Figma: «Файл не выбран» в режиме выбора
+            // «Файл не выбран» в режиме выбора
             name.textContent = state.select ? 'Файл не выбран' : '';
             meta.textContent = '';
         }
@@ -1042,7 +1143,7 @@ if (root && win) {
         if (!items.length || confirmDialog.open || hasProtected(items, 'удалить')) {
             return;
         }
-        // тексты — Figma file-modal (delfolder, delfile); всегда видно, что именно удалится
+        // всегда видно, что именно удалится
         const isFolder = items.length === 1 && items[0].type === 'dir';
         const hasFolders = items.some((item) => item.type === 'dir');
         const [title, text] = items.length > 1
@@ -1672,7 +1773,7 @@ if (root && win) {
         hideTip();
     });
 
-    // подсказка поиска — короче на телефоне (Figma: «Название файла»)
+    // подсказка поиска — короче на телефоне
     const mobile = window.matchMedia(MOBILE);
     const searchPlaceholder = () => {
         searchInput.placeholder = mobile.matches ? 'Название файла' : 'Введите название файла';

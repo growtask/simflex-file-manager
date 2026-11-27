@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
-    <!-- Иконки файлового менеджера file-icon (Figma SimflexCMS, страница Way-File). Сборка: simflex-agents/plans/upgrade-admin/icons/build-fm-sprite.py -->
+    <!-- Иконки файлового менеджера: 24×24, цвет — currentColor -->
     <symbol id="fm-back" viewBox="0 0 24 24">
         <path d="M14.7071 6.70705C15.0976 6.31652 15.0976 5.68351 14.7071 5.29298C14.3166 4.90246 13.6836 4.90246 13.293 5.29298L7.29304 11.293C6.90252 11.6835 6.90252 12.3165 7.29304 12.707L13.293 18.707C13.6836 19.0976 14.3166 19.0976 14.7071 18.707C15.0976 18.3165 15.0976 17.6835 14.7071 17.293L9.41414 12L14.7071 6.70705Z" fill="currentColor" />
     </symbol>

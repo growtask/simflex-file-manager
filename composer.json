@@ -1,20 +1,48 @@
 {
-  "name": "simflex/file-manager",
-  "description": "Standalone PHP file manager",
-  "minimum-stability": "stable",
-  "license": "proprietary",
-  "authors": [
-    {
-      "name": "pf",
-      "email": "panzerfaust@ev0lve.xyz"
-    }
-  ],
-  "require": {
-    "php": ">=8.0"
-  },
-  "autoload": {
-    "psr-4": {
-      "Simflex\\": "src/"
-    }
-  }
+    "name": "simflex/file-manager",
+    "description": "Файловый менеджер для PHP-сайтов: окно выбора и управления файлами каталога загрузок, JSON API, сжатие картинок и видео",
+    "type": "library",
+    "keywords": [
+        "file-manager",
+        "file-picker",
+        "uploads",
+        "media-library",
+        "simflex"
+    ],
+    "homepage": "https://github.com/growtask/simflex-file-manager",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "pf",
+            "role": "Developer"
+        },
+        {
+            "name": "Denis Glushkov",
+            "homepage": "https://github.com/glushkovds",
+            "role": "Developer"
+        },
+        {
+            "name": "Arseniy Kosobryuhov",
+            "homepage": "https://github.com/ArseniyKosobryuhov",
+            "role": "Developer"
+        },
+        {
+            "name": "Andrey Timofeevich",
+            "role": "Designer, developer"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*"
+    },
+    "suggest": {
+        "ext-gd": "Сжатие JPEG, PNG и WebP в WebP при загрузке",
+        "ext-intl": "Транслитерация имён загруженных файлов с любых алфавитов (кириллица работает и без неё)"
+    },
+    "autoload": {
+        "psr-4": {
+            "Simflex\\FileManager\\": "src/FileManager/"
+        }
+    },
+    "minimum-stability": "stable"
 }

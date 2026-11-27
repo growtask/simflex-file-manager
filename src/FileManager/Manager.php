@@ -2,12 +2,12 @@
 
 namespace Simflex\FileManager;
 
-use JetBrains\PhpStorm\NoReturn;
-use Simflex\Core\Http\Api\ApiException;
-use Simflex\Core\Http\Api\JsonEnvelopeResponse;
-use Simflex\Core\Http\Request;
-use Simflex\Core\System\Container;
-
+/**
+ * API файлового менеджера: дерево папок, список файлов, загрузка, создание, переименование, перемещение
+ * и удаление в одном каталоге (корне файлов). Путь не выходит из корня, изменяющие действия — только POST
+ * со страницы этого же сайта (и с CSRF-токеном, если задана проверка). Ответ — JSON
+ * {"error": {"code": 0, "message": ""}, ...данные}, ошибка — HTTP-статус 4xx/5xx и error.message
+ */
 class Manager
 {
     /**
@@ -28,7 +28,7 @@ class Manager
         'woff', 'woff2', 'ttf', 'otf', 'eot',
     ];
 
-    /** Картинки, которые при загрузке можно сжать в WebP (как в редакторе texted): JPEG, PNG, WebP */
+    /** Картинки, которые при загрузке можно сжать в WebP: JPEG, PNG, WebP */
     public const COMPRESSED_IMAGES = ['jpg', 'jpeg', 'png', 'webp'];
 
     /** Видео, которые при загрузке можно сжать в MP4 (H.264) через ffmpeg; аудио не сжимается */
@@ -62,12 +62,6 @@ class Manager
     protected const API_METHODS = ['getTree', 'getFileList', 'download', 'usage', 'compression', 'delete', 'createDir',
         'rename', 'move', 'upload'];
 
-    /**
-     * Системные папки от корня: их нельзя удалить, переименовать и переместить (содержимое — можно). В них ядро,
-     * поля-таблицы и редактор texted кладут загруженные файлы (uf/images|video|audio|files/...)
-     */
-    public const PROTECTED_DIRS = ['/images', '/files', '/video', '/audio'];
-
     /** Больше стольких элементов за один запрос move не перемещается */
     public const MOVE_MAX_ITEMS = 500;
 
@@ -85,7 +79,7 @@ class Manager
     /** Методы API, которые меняют файлы */
     protected const MODIFYING_METHODS = ['delete', 'createDir', 'rename', 'move', 'upload'];
 
-    /** Кириллица → латиница для имён загруженных файлов (как в редакторе texted) */
+    /** Кириллица → латиница для имён загруженных файлов */
     protected const TRANSLIT = [
         'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'yo', 'ж' => 'zh', 'з' => 'z',
         'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n', 'о' => 'o', 'п' => 'p', 'р' => 'r',
@@ -108,12 +102,16 @@ class Manager
     protected string $rootUrl = '/uf';
     /** Запрос к API: метод, параметры, файлы, заголовки */
     protected Request $request;
+    /** @var string[] Системные папки от корня (/images): их нельзя удалить, переименовать и переместить */
+    protected array $protectedDirs = [];
+    /** @var callable|null Запись ошибки, которую пользователь не видит: fn(string $message); null — error_log() */
+    protected $errorLogger = null;
 
     /**
-     * @param string $root Каталог файлов (public/uf)
-     * @param callable|null $authFn Доступ к файлам: fn(): bool
-     * @param callable|null $csrfFn Проверка CSRF-токена изменяющего запроса: fn(): bool (ядро - Csrf::isValid())
-     * @param Request|null $request Запрос; null - текущий (Container::getRequest())
+     * @param string $root Каталог файлов (например public/uploads)
+     * @param callable|null $authFn Есть ли у пользователя доступ к файлам: fn(): bool; null — есть у всех
+     * @param callable|null $csrfFn Проверка CSRF-токена изменяющего запроса: fn(): bool; null — без проверки
+     * @param Request|null $request Запрос; null — текущий запрос PHP (Request::fromGlobals())
      */
     public function __construct(string $root, $authFn, $csrfFn = null, ?Request $request = null)
     {
@@ -122,7 +120,34 @@ class Manager
         $this->realRoot = static::normalizeSeparators((string)realpath($this->rootDir));
         $this->testAuthFn = $authFn;
         $this->csrfFn = $csrfFn;
-        $this->request = $request ?? Container::getRequest();
+        $this->request = $request ?? Request::fromGlobals();
+    }
+
+    /**
+     * Системные папки: их нельзя удалить, переименовать и переместить (содержимое — можно). Например, папки,
+     * в которые CMS сама кладёт загруженные файлы. Окну тот же список передаётся в шаблон (protectedDirs)
+     * @param string[] $dirs Пути от корня: ['/images', '/files']
+     */
+    public function setProtectedDirs(array $dirs): static
+    {
+        $this->protectedDirs = array_values(array_map(fn(string $dir) => '/' . trim($dir, '/'), $dirs));
+        return $this;
+    }
+
+    /** @return string[] Системные папки от корня */
+    public function getProtectedDirs(): array
+    {
+        return $this->protectedDirs;
+    }
+
+    /**
+     * Куда писать внутренние ошибки (их текст пользователю не показывается)
+     * @param callable $fn fn(string $message): void
+     */
+    public function setErrorLogger(callable $fn): static
+    {
+        $this->errorLogger = $fn;
+        return $this;
     }
 
     /** Путь с разделителем «/» (на Windows realpath() отдаёт «\») */
@@ -133,7 +158,7 @@ class Manager
 
     /**
      * Поиск ссылок на файл для метода usage: окно предупреждает перед удалением, переименованием и перемещением,
-     * что файл стоит на страницах (ядро — System\FileUsage)
+     * что файл стоит на страницах сайта. Поиск задаёт сайт (например, по текстовым колонкам базы)
      * @param callable $fn fn(string $url): array<string, int> — таблица => сколько записей содержат адрес
      * @param string $rootUrl Адрес корня файлов на сайте
      */
@@ -164,14 +189,26 @@ class Manager
     }
 
     /**
-     * Выполняет метод API и отправляет ответ: JSON-конверт (JsonEnvelopeResponse) или, для download, файл.
-     * Ошибка - HTTP-статус 4xx/5xx и error.message
+     * Выполняет метод API и отправляет ответ: JSON или, для download, файл
      */
-    #[NoReturn]
-    public function handleRequest(): void
+    public function handleRequest(): never
     {
-        $response = new JsonEnvelopeResponse();
+        [$status, $body] = $this->process();
+        http_response_code($status);
+        header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
+        echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        exit;
+    }
+
+    /**
+     * Выполняет метод API (параметр method) и возвращает ответ, не отправляя его: [HTTP-статус, тело].
+     * Тело — {"error": {"code": 0, "message": ""}, ...данные}: список — в items, ассоциативный массив — ключами
+     * рядом с error. Ошибка — статус 4xx/5xx, error.code (равен статусу) и error.message. download отдаёт файл сам
+     * @return array{0: int, 1: array<string, mixed>}
+     */
+    public function process(): array
+    {
         try {
             if (!$this->testAuth()) {
                 throw ApiException::unauthorized('Нет доступа к файлам');
@@ -187,12 +224,27 @@ class Manager
                 $this->checkModifyingRequest();
             }
 
-            $response->setData($this->{$method}());
-        } catch (\Throwable $ex) {
-            $response->setError($ex);
-        }
+            $methodResult = $this->{$method}();
+            // список — в items, ассоциативный массив — ключами рядом с error
+            $responseFields = $methodResult && array_is_list($methodResult)
+                ? ['items' => $methodResult]
+                : $methodResult;
 
-        $response->send();
+            return [200, ['error' => ['code' => 0, 'message' => '']] + $responseFields];
+        } catch (ApiException $ex) {
+            return [$ex->getHttpStatus(), ['error' => ['code' => $ex->getCode(), 'message' => $ex->getMessage()]]];
+        } catch (\Throwable $ex) {
+            $message = sprintf(
+                'Файловый менеджер: %s (%s в %s:%d)',
+                $ex->getMessage(),
+                $ex::class,
+                $ex->getFile(),
+                $ex->getLine()
+            );
+            $this->errorLogger ? ($this->errorLogger)($message) : error_log($message);
+
+            return [500, ['error' => ['code' => 500, 'message' => 'Внутренняя ошибка, повторите позже']]];
+        }
     }
 
     /**
@@ -270,12 +322,12 @@ class Manager
     }
 
     /**
-     * Системная папка (PROTECTED_DIRS) не удаляется, не переименовывается и не перемещается
+     * Системная папка (setProtectedDirs()) не удаляется, не переименовывается и не перемещается
      * @throws ApiException 403
      */
     protected function checkNotProtected(string $path, string $actionName): void
     {
-        if (is_dir($path) && in_array($this->relative($path), static::PROTECTED_DIRS, true)) {
+        if (is_dir($path) && in_array($this->relative($path), $this->protectedDirs, true)) {
             throw ApiException::forbidden('Системную папку «' . basename($path) . '» нельзя ' . $actionName);
         }
     }
@@ -292,7 +344,7 @@ class Manager
      * (вложенные узлы или null, если уровень не загружен)
      * @param string $parent Папка на диске, от которой строится дерево; пусто - параметр запроса path
      * @param int|null $depth Уровней ниже $parent; null - из запроса
-     * @return array
+     * @return array<int, array<string, mixed>>
      */
     protected function getTree(string $parent = '', ?int $depth = null): array
     {
@@ -341,7 +393,7 @@ class Manager
     /**
      * Содержимое папки path: файлы и, при include_dirs, папки (у папки — число элементов и дата последнего
      * изменения файла в ней). Скрытые (с точки) и символические ссылки не показываются
-     * @return array
+     * @return array<int, array<string, mixed>>
      */
     protected function getFileList(): array
     {
@@ -402,7 +454,7 @@ class Manager
 
     /**
      * Сведения о файле для карточки: картинка ли, размер для показа, размеры картинки, дата изменения
-     * @return array
+     * @return array<string, mixed>
      */
     protected function getFileInfo(\DirectoryIterator $file): array
     {
@@ -635,8 +687,7 @@ class Manager
     /**
      * Отдаёт файл на скачивание потоком (без чтения в память)
      */
-    #[NoReturn]
-    protected function download()
+    protected function download(): never
     {
         $path = $this->resolvePath(allowRoot: false);
         if (!is_file($path)) {
@@ -659,7 +710,7 @@ class Manager
     }
 
     /**
-     * Загружает файлы file[] в папку path: имя - латиницей (как в редакторе texted), занятое не перезаписывается
+     * Загружает файлы file[] в папку path: имя - латиницей, занятое не перезаписывается
      * (photo-2.webp).
      * Сжатие — только если пользователь согласился (compress=1): JPEG, PNG и WebP — в WebP до IMAGE_MAX_SIDE,
      * видео — в MP4 до VIDEO_MAX_SIDE (нужен ffmpeg); сжатый файл остаётся, только если он легче или уменьшен.
@@ -842,7 +893,7 @@ class Manager
 
     /**
      * Сжимает видео в MP4: H.264 (CRF VIDEO_CRF), звук AAC 128 кбит/с, большая сторона — не больше VIDEO_MAX_SIDE,
-     * быстрый старт в браузере (faststart). Логика — как конвертация видео в редакторе texted (ffmpeg)
+     * быстрый старт в браузере (faststart)
      */
     public static function writeMp4(string $source, string $destination): bool
     {
@@ -872,7 +923,7 @@ class Manager
 
     /**
      * Сжимает JPEG, PNG или WebP в WebP (качество IMAGE_QUALITY), большая сторона - не больше IMAGE_MAX_SIDE;
-     * прозрачность сохраняется. Логика - как в редакторе texted (TedMediaStorage::writeWebp)
+     * прозрачность сохраняется
      *
      * @return array{width: int, height: int}
      * @throws \InvalidArgumentException не картинка, повреждена или слишком большая
@@ -945,7 +996,7 @@ class Manager
     }
 
     /**
-     * Есть ли в файле HTML, скрипт или PHP (файл одновременно картинка и страница). Как в редакторе texted
+     * Есть ли в файле HTML, скрипт или PHP (файл одновременно картинка и страница)
      */
     public static function hasCode(string $path): bool
     {
@@ -971,7 +1022,7 @@ class Manager
     }
 
     /**
-     * Имя файла латиницей: «Фото отпуска 1.JPG» → foto-otpuska-1 (без расширения). Как в редакторе texted
+     * Имя файла латиницей: «Фото отпуска 1.JPG» → foto-otpuska-1 (без расширения)
      */
     public static function slugify(string $original): string
     {

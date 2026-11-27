@@ -1,8 +1,8 @@
 /*
- * Файловый менеджер Simflex (Figma SimflexCMS, страница Way-File): свой слой интерфейса, независимый от админки,
- * по образцу редактора texted. Окна — нативный <dialog> (верхний слой браузера: открытое последним всегда сверху),
- * свои меню, подсказка, подтверждение и тосты. Цвета, скругления и тени — только токены --fm-* ниже: они берут
- * переменные дизайн-системы Simflex (--color-*), а без них — значения из макета. Размеры — px макета (окно 920).
+ * Файловый менеджер: свой слой интерфейса, независимый от стилей страницы. Окна — нативный <dialog> (верхний
+ * слой браузера: открытое последним всегда сверху), свои меню, подсказка, подтверждение и уведомления. Цвета,
+ * скругления и тени — только токены --fm-* ниже: они берут переменные дизайн-системы Simflex (--color-*), если они
+ * есть на странице, а без них — свои значения. Поменять вид — переопределить --fm-* на .fm-root. Окно — 920 px.
  * Тема: data-fm-theme="dark" на корнях. Фокус-кольцо — только с клавиатуры (:focus-visible), поле — рамкой.
  */
 
@@ -60,14 +60,14 @@
     --fm-shadow-l: 0 0 40px 5px rgba(13, 13, 13, 0.05);
 
     --fm-font: var(--font-family-body, "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
-    /* движение — как в texted (--ui-ease, --ui-ease-out), чуть дольше для окон и списка */
+    /* движение: мягкое замедление в конце, чуть дольше для окон и списка */
     --fm-ease: cubic-bezier(0.14, 0.18, 0.16, 1.02);
     --fm-ease-out: cubic-bezier(0.2, 0, 0, 1);
     --fm-fast: 140ms;
     --fm-base: 200ms;
     --fm-slow: 260ms;
 
-    /* полосы прокрутки — Scrollbar/scrollbar дизайн-системы (как в texted): classic, без стрелок, 4 px */
+    /* полосы прокрутки: classic, без стрелок, 4 px */
     --fm-sb-track: rgba(237, 243, 250, 0.2);
     --fm-sb-track-active: rgba(237, 243, 250, 0.5);
     --fm-sb-thumb: rgba(99, 161, 247, 0.2);
@@ -234,7 +234,7 @@ html:has(.fm-dialog[open]) {
     }
 }
 
-/* ---------- кнопка-иконка (Figma file-tool на Tabs/main soft) ---------- */
+/* ---------- кнопка-иконка ---------- */
 
 .fm-tool {
     position: relative;
@@ -267,7 +267,7 @@ html:has(.fm-dialog[open]) {
     opacity: 0.4;
 }
 
-/* «Удалить папку»: значок красный (Figma), в корне недоступна */
+/* «Удалить папку»: значок красный, в корне и в системной папке недоступна */
 .fm-tool[data-fm-delete-folder] .fm-icon {
     color: var(--fm-error-medium);
 }
@@ -324,7 +324,15 @@ html:has(.fm-dialog[open]) {
     background: var(--fm-medium);
 }
 
-/* большая кнопка окна (Figma Modal/main footer) */
+.fm-button_gray:active:not(:disabled) {
+    background: var(--fm-accent-light);
+}
+
+.fm-root[data-fm-theme="dark"] .fm-button_gray:active:not(:disabled) {
+    background: var(--fm-darker);
+}
+
+/* большая кнопка окна действия */
 .fm-button_l {
     flex: 1 1 0;
     min-height: 56px;
@@ -406,6 +414,10 @@ button.fm-crumbs__item:hover {
     color: var(--fm-accent);
 }
 
+button.fm-crumbs__item:active {
+    color: var(--fm-accent-darker);
+}
+
 .fm-crumbs__item[aria-current="page"] {
     color: var(--fm-current);
 }
@@ -431,7 +443,7 @@ button.fm-crumbs__item:hover {
     background: var(--fm-field);
 }
 
-/* ---------- дерево (Figma file-tree-row) ---------- */
+/* ---------- дерево папок ---------- */
 
 .fm-tree {
     flex: 1;
@@ -581,6 +593,10 @@ button.fm-crumbs__item:hover {
     background: var(--fm-hover);
 }
 
+.fm-sort:active {
+    background: var(--fm-press);
+}
+
 .fm-sort .fm-icon {
     transition: transform 0.22s var(--fm-ease);
 }
@@ -589,7 +605,7 @@ button.fm-crumbs__item:hover {
     transform: rotate(180deg);
 }
 
-/* ---------- сетка карточек (Figma file-card) ---------- */
+/* ---------- сетка карточек ---------- */
 
 .fm-board {
     position: relative;
@@ -636,6 +652,11 @@ button.fm-crumbs__item:hover {
     box-shadow: none;
 }
 
+/* нажатие на выбранную карточку тоже видно */
+.fm-card[aria-selected="true"]:active {
+    background: var(--fm-press);
+}
+
 /* превью: скругление внутри карточки = скругление карточки − отступ (12 − 8), углы идут ровно */
 .fm-card__preview {
     position: relative;
@@ -653,7 +674,7 @@ button.fm-crumbs__item:hover {
     color: var(--fm-accent-light);
 }
 
-/* тёмная тема (Figma): плашка веса тёмная, имя выбранного — белое */
+/* тёмная тема: плашка веса тёмная, имя выбранного — белое */
 .fm-root[data-fm-theme="dark"] .fm-card__badge {
     background: var(--fm-darker);
     color: var(--fm-accent-light);
@@ -687,7 +708,7 @@ button.fm-crumbs__item:hover {
     white-space: nowrap;
 }
 
-/* галочка выбора (Figma file-card selected): при наведении и когда отмечено несколько; один выбранный — без неё (active) */
+/* галочка выбора: при наведении и в режиме отметки; выбранный кликом файл — без неё */
 .fm-card__check {
     position: absolute;
     z-index: 1;
@@ -787,7 +808,7 @@ button.fm-crumbs__item:hover {
 }
 
 /* загрузка папки и пустое состояние — поверх сетки, без прыжков */
-/* Figma states/empty: серый маркер (disabled) со значком file-search, заголовок h4, текст */
+/* пустое состояние: серый маркер со значком поиска, заголовок, текст */
 .fm-state {
     position: absolute;
     inset: 0;
@@ -915,7 +936,7 @@ button.fm-crumbs__item:hover {
     height: 48px;
 }
 
-/* ---------- всплывающие меню (Figma file-menu на Dropdown/main) ---------- */
+/* ---------- всплывающие меню ---------- */
 
 .fm-pop {
     position: fixed;
@@ -1017,7 +1038,7 @@ button.fm-crumbs__item:hover {
     background: var(--fm-line);
 }
 
-/* ---------- подсказка (Figma Tooltip/main) ---------- */
+/* ---------- подсказка ---------- */
 
 .fm-tip {
     position: fixed;
@@ -1056,7 +1077,7 @@ button.fm-crumbs__item:hover {
     white-space: nowrap;
 }
 
-/* ---------- окна действий (Figma file-modal на Modal/main) ---------- */
+/* ---------- окна действий ---------- */
 
 .fm-modal {
     position: relative;
@@ -1181,7 +1202,7 @@ button.fm-crumbs__item:hover {
     border-color: var(--fm-medium);
 }
 
-/* фокус поля — рамкой (как в texted), без кольца и при клике мышью */
+/* фокус поля — рамкой, без кольца и при клике мышью */
 .fm-field__input:focus,
 .fm-field__input:focus-visible {
     outline: none;
@@ -1200,6 +1221,8 @@ button.fm-crumbs__item:hover {
 
 /* ---------- тосты ---------- */
 
+/* колода: уведомления лежат стопкой — новое спереди, прежние чуть меньше и выглядывают сверху; курсор над стопкой
+   раскрывает её списком. Место каждого — --toast-y и --toast-scale (layoutToasts в file-manager.js) */
 .fm-toasts {
     position: fixed;
     inset: auto 0 24px;
@@ -1210,10 +1233,9 @@ button.fm-crumbs__item:hover {
     border: 0;
     background: none;
     overflow: visible;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
+    display: grid;
+    justify-items: center;
+    align-items: end;
     pointer-events: none;
 }
 
@@ -1222,8 +1244,11 @@ button.fm-crumbs__item:hover {
 }
 
 .fm-toast {
+    position: relative;
+    grid-area: 1 / 1;
     max-width: min(480px, calc(100vw - 24px));
     padding: 8px 12px;
+    overflow: hidden;
     border-radius: var(--fm-radius-m);
     background: var(--fm-toast-bg);
     color: var(--fm-toast-text);
@@ -1231,10 +1256,45 @@ button.fm-crumbs__item:hover {
     font-size: 13px;
     line-height: 1.5;
     pointer-events: auto;
+    transform: translateY(var(--toast-y, 0px)) scale(var(--toast-scale, 1));
+    transform-origin: 50% 0;
+    transition: transform var(--fm-base) var(--fm-ease-out), opacity var(--fm-base) ease;
     animation: fm-toast-in 200ms var(--fm-ease);
 }
 
-/* Figma Feedback/toast success: «Файлы загружены» — зелёный */
+.fm-toast__text {
+    margin: 0;
+}
+
+/* у задних в колоде видна только кромка */
+.fm-toast[data-back] > * {
+    opacity: 0;
+    transition: opacity var(--fm-fast) ease;
+}
+
+/* полоска оставшегося времени (у обычных уведомлений) */
+.fm-toast__timer {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: var(--fm-medium);
+    transform-origin: left;
+    animation: fm-toast-timer linear forwards;
+}
+
+.fm-toast_success .fm-toast__timer,
+.fm-toast_error .fm-toast__timer {
+    visibility: hidden;
+}
+
+/* то же сообщение ещё раз — уведомление коротко «вздрагивает», а не повторяется */
+.fm-toast_bump {
+    animation: fm-toast-bump 240ms var(--fm-ease-out);
+}
+
+/* уведомление об успехе («Файлы загружены») — зелёное */
 .fm-toast_success {
     background: var(--fm-success-dark);
     color: var(--fm-white);
@@ -1247,8 +1307,8 @@ button.fm-crumbs__item:hover {
 
 .fm-toast.is-closing {
     opacity: 0;
-    transform: translateY(8px);
-    transition: opacity 160ms ease-out, transform 160ms ease-out;
+    transform: translateY(calc(var(--toast-y, 0px) + 4px)) scale(var(--toast-scale, 1));
+    transition: opacity 160ms ease, transform 160ms ease;
 }
 
 @keyframes fm-toast-in {
@@ -1256,9 +1316,30 @@ button.fm-crumbs__item:hover {
         opacity: 0;
         transform: translateY(8px);
     }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
 }
 
-/* ---------- нижняя панель телефона (Figma file-tabbar-item) ---------- */
+@keyframes fm-toast-timer {
+    from {
+        transform: scaleX(1);
+    }
+
+    to {
+        transform: scaleX(0);
+    }
+}
+
+@keyframes fm-toast-bump {
+    40% {
+        transform: translateY(var(--toast-y, 0px)) scale(1.03);
+    }
+}
+
+/* ---------- нижняя панель телефона ---------- */
 
 .fm-tabbar {
     display: none;
@@ -1271,7 +1352,7 @@ button.fm-crumbs__item:hover {
         padding: 0;
     }
 
-    /* Figma file-window mobile: шапка и панель поиска с отступом 12, у сортировки нет разделителя */
+    /* телефон: шапка и панель поиска с отступом 12, у сортировки нет разделителя */
     .fm-window__head {
         padding: 8px 12px;
     }
@@ -1309,7 +1390,7 @@ button.fm-crumbs__item:hover {
         display: grid;
         grid-template-columns: 40px minmax(0, 1fr) auto;
         grid-template-areas: "preview name name" "preview date weight";
-        /* Figma file-card-mobile: превью и текст через 8, имя и дата через 4 */
+        /* строка файла: превью и текст через 8, имя и дата через 4 */
         column-gap: 8px;
         row-gap: 4px;
         align-items: center;
@@ -1338,7 +1419,7 @@ button.fm-crumbs__item:hover {
         display: none;
     }
 
-    /* Figma file-card-mobile: выбранная строка — светлая заливка, имя обычным цветом */
+    /* выбранная строка — светлая заливка, имя обычным цветом */
     .fm-card[aria-selected="true"] {
         background: var(--fm-hover);
     }
@@ -1386,7 +1467,7 @@ button.fm-crumbs__item:hover {
         text-align: right;
     }
 
-    /* Figma file-tabbar-item: светлая панель, тёмные значки */
+    /* светлая панель, тёмные значки */
     .fm-tabbar {
         display: flex;
         gap: 4px;
@@ -1394,7 +1475,7 @@ button.fm-crumbs__item:hover {
         background: var(--fm-field);
     }
 
-    /* Figma file-tabbar-item: 52 в высоту, значок 24, подпись ui/xs серым */
+    /* пункт панели: 52 в высоту, значок 24, подпись мелким серым */
     .fm-tabbar__item {
         display: flex;
         flex: 1;
@@ -1420,12 +1501,12 @@ button.fm-crumbs__item:hover {
         background: var(--fm-press);
     }
 
-    /* тосты — над нижней панелью (68) с отступом 20, на всю ширину (Figma file-screen-mobile-toast) */
+    /* уведомления — над нижней панелью (68) с отступом 20, на всю ширину */
     .fm-toasts {
         right: 12px;
         bottom: calc(88px + env(safe-area-inset-bottom));
         left: 12px;
-        align-items: stretch;
+        justify-items: stretch;
     }
 
     .fm-toast {
@@ -1468,10 +1549,10 @@ button.fm-crumbs__item:hover {
         max-width: none;
     }
 
-    /* Figma file-modal mobile: шторка снизу без скругления, сверху полоса с крестиком и линией */
+    /* окно действия на телефоне: шторка снизу без скругления, сверху полоса с крестиком и линией */
     .fm-modal__box {
         max-height: calc(100dvh - 24px - var(--fm-keyboard, 0px));
-        /* Figma file-modal mobile: шапка 64 с крестиком, линия 2 с отступами 8, содержимое 20 / 16 / 70 */
+        /* шапка 64 с крестиком, линия 2 с отступами 8, содержимое 20 / 16 / 70 */
         padding: 86px 16px calc(70px + env(safe-area-inset-bottom));
         border-radius: 0;
         background:
@@ -1507,7 +1588,7 @@ button.fm-crumbs__item:hover {
     }
 }
 
-/* телефон (Figma nav/breadcrumbs mobile): только родительская и текущая папки */
+/* телефон: в пути только родительская и текущая папки */
 @media (max-width: 599px) {
     .fm-crumbs__list > :nth-last-child(n + 5) {
         display: none;
@@ -1525,7 +1606,7 @@ button.fm-crumbs__item:hover {
     }
 }
 
-/* ---------- полосы прокрутки (Figma Scrollbar/scrollbar, как в texted) ---------- */
+/* ---------- полосы прокрутки ---------- */
 
 .fm-root :is(.fm-tree, .fm-board, .fm-pop__box, .fm-modal__box, .fm-move__list)::-webkit-scrollbar {
     width: 4px;
@@ -1768,6 +1849,10 @@ button.fm-move__crumb:hover {
     color: var(--fm-text);
 }
 
+button.fm-move__crumb:active {
+    background: var(--fm-press);
+}
+
 .fm-move__crumb[aria-current] {
     color: var(--fm-current);
     font-weight: 600;
@@ -1880,4 +1965,9 @@ button.fm-move__crumb:hover {
     .fm-move__list {
         height: min(320px, 40dvh);
     }
+}
+
+/* галочка: нажатие — чуть меньше (рядом правила наведения, поэтому точнее) */
+.fm-card .fm-card__check:active {
+    transform: scale(0.88);
 }

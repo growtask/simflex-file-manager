@@ -1,15 +1,18 @@
 <?php
 
 /**
- * Файловый менеджер (Figma SimflexCMS, страница Way-File): разметка окон на своём слое интерфейса, без компонентов
- * админки — как редактор texted. Окна — <dialog> (верхний слой браузера): окно менеджера file-window, окна действий
- * file-modal («Переименовать», «Создать папку», «Переместить», подтверждение удаления, «Сжать перед загрузкой?»),
- * меню file-menu и сортировки, подсказка, тосты. Содержимое строит assets/js/file-manager.js по API Manager,
- * стили — assets/styles/file-manager.css.
- * @var string $fileManagerApi Адрес API (Manager::handleRequest())
- * @var string $fileManagerRoot Веб-путь корня файлов, например /uf
- * @var string $fileManagerAssets Веб-путь опубликованного каталога assets пакета
- * @var string $theme Тема админки: light или dark
+ * Файловый менеджер: разметка окон на своём слое интерфейса, без зависимостей от страницы. Окна — <dialog>
+ * (верхний слой браузера): окно менеджера, окна действий («Переименовать», «Создать папку», «Переместить»,
+ * подтверждение удаления, «Сжать перед загрузкой?»), меню файла, папки и сортировки, подсказка, уведомления.
+ * Содержимое строит assets/js/file-manager.js по API Manager, стили — assets/styles/file-manager.css.
+ * Шаблон выводится в конце <body> (include с переменными ниже), скрипт подключается как модуль.
+ * @var string $fileManagerApi Адрес API (страница, которая вызывает Manager::handleRequest())
+ * @var string $fileManagerRoot Адрес корня файлов на сайте, например /uploads
+ * @var string $fileManagerAssets Адрес каталога src/assets пакета, доступного из браузера
+ * @var string $theme Тема: light (по умолчанию) или dark
+ * @var string $fileManagerCsrfToken CSRF-токен для изменяющих запросов (заголовок X-CSRF-Token); пусто — из
+ *      <meta name="csrf-token"> страницы, если он есть
+ * @var string[] $fileManagerProtectedDirs Системные папки (Manager::setProtectedDirs()): в меню без удаления
  */
 
 $assetsDir = dirname(__DIR__) . '/assets';
@@ -18,10 +21,10 @@ $asset = fn(string $path) => $fileManagerAssets . '/' . $path . '?v=' . (int)@fi
 $e = fn(string $text) => htmlspecialchars($text, ENT_QUOTES);
 $sprite = $asset('img/icons.svg');
 $theme = ($theme ?? 'light') === 'dark' ? 'dark' : 'light';
-/** Иконка набора file-icon */
+/** Иконка из спрайта assets/img/icons.svg */
 $icon = fn(string $name, string $class = '') => '<svg class="fm-icon' . ($class ? ' ' . $class : '')
     . '" aria-hidden="true"><use href="' . $e($sprite) . '#fm-' . $name . '"></use></svg>';
-/** Кнопка-иконка (file-tool) с подсказкой */
+/** Кнопка-иконка с подсказкой */
 $tool = fn(string $name, string $label, string $action, string $extra = '') => '<button type="button" class="fm-tool'
     . '" data-fm-action="' . $action . '" aria-label="' . $e($label) . '" data-fm-tip="' . $e($label) . '"'
     . $extra . '>'
@@ -40,7 +43,7 @@ $field = fn(string $label, string $placeholder, string $hint, string $attributes
     . '<input class="fm-field__input" type="text" autocomplete="off" spellcheck="false"'
     . ' placeholder="' . $e($placeholder) . '" ' . $attributes . '>'
     . '<span class="fm-field__hint">' . $e($hint) . '</span></label>';
-/** Окно действия (file-modal): крестик снаружи, заголовок, текст, содержимое, «Отменить» и главная кнопка */
+/** Окно действия: крестик снаружи, заголовок, текст, содержимое, «Отменить» и главная кнопка */
 $modal = fn(
     string $id,
     string $title,
@@ -70,7 +73,8 @@ $modal = fn(
 <link rel="stylesheet" href="<?= $e($asset('styles/file-manager.css')) ?>">
 <div class="file-manager" data-fm-api="<?= $e($fileManagerApi) ?>" data-fm-root="<?= $e($fileManagerRoot) ?>"
      data-fm-sprite="<?= $e($sprite) ?>"
-     data-fm-protected="<?= $e(json_encode(\Simflex\FileManager\Manager::PROTECTED_DIRS)) ?>">
+     data-fm-csrf="<?= $e((string)($fileManagerCsrfToken ?? '')) ?>"
+     data-fm-protected="<?= $e(json_encode(array_values($fileManagerProtectedDirs ?? []))) ?>">
     <dialog id="sf-file-manager" class="fm-root fm-dialog fm-dialog_window" data-fm-theme="<?= $theme ?>"
             aria-label="Файловый менеджер">
         <div class="fm-window fm-dialog__box">
